@@ -39,6 +39,10 @@ void add_main_shaders(GLuint shaderProgram) {
 #define RED_LITERAL_FLOATS 1.0f, 0.0f, 0.0f
 #define BLUE_LITERAL_FLOATS 0.0f, 0.0f, 1.0f
 #define GREEN_LITERAL_FLOATS 0.0f, 1.0f, 0.0f
+#define WHITE_LITERAL_FLOATS 1.0f, 1.0f, 1.0f
+#define GREY1_LITERAL_FLOATS 0.2f, 0.2f, 0.2f
+#define GREY2_LITERAL_FLOATS 0.6f, 0.6f, 0.6f
+#define GREY3_LITERAL_FLOATS 0.8f, 0.8f, 0.8f
 
 int main(int argc, char* argv[]) {
 
@@ -62,12 +66,17 @@ int main(int argc, char* argv[]) {
     gladLoadGL();
     fprintf(stderr, "OpenGL %s\n", glGetString(GL_VERSION));
 
+    // Setup vertex arrays/buffers.
     GLuint vertex_array_ref;
     glGenVertexArrays(1, &vertex_array_ref);
     glBindVertexArray(vertex_array_ref);
     GLuint vertex_buffer_ref;
     glGenBuffers(1, &vertex_buffer_ref); // Generate 1 buffer
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_ref);
+    GLuint ebo;
+    glGenBuffers(1, &ebo);
+
+    // Setup shaders.
     GLuint shaderProgram = glCreateProgram();
     add_main_shaders(shaderProgram);
     glLinkProgram(shaderProgram);
@@ -96,14 +105,27 @@ int main(int argc, char* argv[]) {
         // Background Fill Color
         glClearColor(0.25f, 0.25f, 0.25f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+
+        // Set up vertex array.
+        GLuint elements[] = {
+			0, 1, 2,
+            2, 3, 0,
+            2, 4, 3,
+        };
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
         float vertices[] = {
-         0.0f,  0.5f, RED_LITERAL_FLOATS,   // Vertex 1 (X, Y)
-         0.5f, -0.5f, GREEN_LITERAL_FLOATS, // Vertex 2 (X, Y)
-        -0.5f, -0.5f, BLUE_LITERAL_FLOATS,  // Vertex 3 (X, Y)
+         -0.5f,  0.5f, GREY1_LITERAL_FLOATS,   
+          0.5f,  0.5f, GREY2_LITERAL_FLOATS,
+          0.5f, -0.5f, GREY3_LITERAL_FLOATS,
+         -0.5f, -0.5f, WHITE_LITERAL_FLOATS,
+          0.0f, -1.0f, GREEN_LITERAL_FLOATS,
         };
 
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+            sizeof(elements), elements, GL_STATIC_DRAW);
+        glDrawElements(GL_TRIANGLES, 9, GL_UNSIGNED_INT, 0);
+        // glDrawArrays(GL_TRIANGLES, 0, 6);
 
 
 
