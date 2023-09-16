@@ -1,1 +1,3 @@
 [Bb]uild/
+*.vs**
+enc_temp_folder/**

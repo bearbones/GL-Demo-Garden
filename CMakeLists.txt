@@ -28,6 +28,7 @@ else()
 endif()
 
 include_directories(Glitter/Headers/
+                    Glitter/
                     Glitter/Vendor/assimp/include/
                     Glitter/Vendor/bullet/src/
                     Glitter/Vendor/glad/include/
