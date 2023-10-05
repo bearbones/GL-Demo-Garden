@@ -36,6 +36,17 @@ void add_main_shaders(GLuint shaderProgram) {
     glAttachShader(shaderProgram, fragmentShader);
 }
 
+void define_vertex_attributes(GLuint shaderProgram) {
+    constexpr GLint vertex_attrib_stride = 5 * sizeof(float);
+    constexpr GLint vertex_position_length = 2 * sizeof(float);
+    GLint posAttrib = glGetAttribLocation(shaderProgram, "position");
+    glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, vertex_attrib_stride, 0);
+    glEnableVertexAttribArray(posAttrib);
+
+    GLint colorAttrib = glGetAttribLocation(shaderProgram, "color");
+    glVertexAttribPointer(colorAttrib, 3, GL_FLOAT, GL_FALSE, vertex_attrib_stride, (void*)vertex_position_length);
+    glEnableVertexAttribArray(colorAttrib);
+}
 #define RED_LITERAL_FLOATS 1.0f, 0.0f, 0.0f
 #define BLUE_LITERAL_FLOATS 0.0f, 0.0f, 1.0f
 #define GREEN_LITERAL_FLOATS 0.0f, 1.0f, 0.0f
@@ -76,21 +87,43 @@ int main(int argc, char* argv[]) {
     GLuint ebo;
     glGenBuffers(1, &ebo);
 
+    // Setup textures.
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    // Set the first two coordinates of (s, r, t) to repeat when sampling over the texture.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    // Set border color to red.
+    constexpr float color[] = { 1.0f, 0.0f, 0.0f, 1.0f };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, color);
+    // Set filter to linear, for both downscaling and upscaling.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Black/white checkerboard
+    float pixels[] = {
+        0.0f, 0.0f, 0.0f,   1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,   0.0f, 0.0f, 0.0f
+    };
+
+    glTexImage2D(GL_TEXTURE_2D,
+        0 /* deepth of field */,
+        GL_RGB /* internal format */,
+        2/* width */,
+        2 /* height */,
+        0 /* border (must be zero) */,
+        GL_RGB /* input format */,
+        GL_FLOAT /* input data type */,
+        pixels);
+
+
     // Setup shaders.
     GLuint shaderProgram = glCreateProgram();
     add_main_shaders(shaderProgram);
     glLinkProgram(shaderProgram);
     glUseProgram(shaderProgram);
-
-    constexpr GLint vertex_attrib_stride = 5 * sizeof(float);
-    constexpr GLint vertex_position_length = 2 * sizeof(float);
-    GLint posAttrib = glGetAttribLocation(shaderProgram, "position");
-    glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, vertex_attrib_stride, 0);
-    glEnableVertexAttribArray(posAttrib);
-
-    GLint colorAttrib = glGetAttribLocation(shaderProgram, "color");
-    glVertexAttribPointer(colorAttrib, 3, GL_FLOAT, GL_FALSE, vertex_attrib_stride, (void*)vertex_position_length);
-    glEnableVertexAttribArray(colorAttrib);
+    define_vertex_attributes(shaderProgram);
 
     auto t_start = std::chrono::high_resolution_clock::now();
 
