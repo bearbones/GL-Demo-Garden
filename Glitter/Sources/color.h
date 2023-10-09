@@ -1,0 +1,7 @@
+#define RED_LITERAL_FLOATS 1.0f, 0.0f, 0.0f
+#define BLUE_LITERAL_FLOATS 0.0f, 0.0f, 1.0f
+#define GREEN_LITERAL_FLOATS 0.0f, 1.0f, 0.0f
+#define WHITE_LITERAL_FLOATS 1.0f, 1.0f, 1.0f
+#define GREY1_LITERAL_FLOATS 0.2f, 0.2f, 0.2f
+#define GREY2_LITERAL_FLOATS 0.6f, 0.6f, 0.6f
+#define GREY3_LITERAL_FLOATS 0.8f, 0.8f, 0.8f

@@ -22,3 +22,6 @@
     path = Glitter/Vendor/bullet
     url = https://github.com/bulletphysics/bullet3.git
     branch = master
+[submodule "soil2"]
+	path = soil2
+	url = https://github.com/SpartanJ/soil2
