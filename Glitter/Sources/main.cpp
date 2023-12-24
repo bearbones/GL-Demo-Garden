@@ -122,14 +122,22 @@ void fill_vertex_element_buffers() {
 	 0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
 	 0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
 	-0.5f,  0.5f,  0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-	-0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f
+	-0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f,
+
+	// Floor
+	-1.0f, -1.0f, -0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+	 1.0f, -1.0f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+	 1.0f,  1.0f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+	 1.0f,  1.0f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+	-1.0f,  1.0f, -0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+	-1.0f, -1.0f, -0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f
 	};
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 }
 
 void build_vertex_uniforms(GLuint shaderProgram) {
 	glm::mat4 view = glm::lookAt(
-		glm::vec3(1.2f, 1.2f, 1.2f),
+		glm::vec3(2.5f, 2.5f, 2.0f),
 		glm::vec3(0.0f, 0.0f, 0.0f),
 		glm::vec3(0.0f, 0.0f, 1.0f)
 	);
@@ -140,6 +148,17 @@ void build_vertex_uniforms(GLuint shaderProgram) {
 	glUniformMatrix4fv(uniProj, 1, GL_FALSE, glm::value_ptr(projection));
 
 
+}
+
+// For the floor
+void activate_stencil_buffer() {
+	glEnable(GL_STENCIL_TEST);
+
+	glStencilFunc(GL_ALWAYS, 1, 0xFF); // Set any stencil to 1
+	glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+	glStencilMask(0xFF); // Write to stencil buffer
+	glDepthMask(GL_FALSE); // Don't write to depth buffer
+	glClear(GL_STENCIL_BUFFER_BIT); // Clear stencil buffer (0 by default)
 }
 
 
@@ -211,13 +230,14 @@ int main(int argc, char* argv[]) {
 	build_vertex_uniforms(shaderProgram);
 	// Frame-variant uniforms.
 	GLint uniTrans = glGetUniformLocation(shaderProgram, "transform");
+	GLint uniColor = glGetUniformLocation(shaderProgram, "overrideColor");
 	auto t_start = std::chrono::high_resolution_clock::now();
 
 
 	// Initialize
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	// Background Fill Color
-	glClearColor(0.25f, 0.25f, 0.25f, 1.0f);
+	glClearColor(0.75f, 0.75f, 0.75f, 1.0f);
 
 	// Rendering Loop
 	while (glfwWindowShouldClose(mWindow) == false) {
@@ -230,14 +250,38 @@ int main(int argc, char* argv[]) {
 
 		fill_vertex_element_buffers();
 
-		glm::mat4 transform = glm::mat4(1.0f);
-		transform = glm::rotate(transform, glm::radians(180.0f * time), glm::vec3(0.0f, 0.0f, 1.0f));
-		// transform rotates a vector 180 degrees about the Z axis.
-		glUniformMatrix4fv(uniTrans, 1, GL_FALSE, glm::value_ptr(transform));
-		// Clear the screen to black
-		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		// Clear the screen to light grey 
+		glClearColor(0.75f, 0.85f, 0.95f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		glm::mat4 transform = glm::mat4(1.0f);
+		glm::mat4 cube_transform = glm::rotate(transform, glm::radians(180.0f * time), glm::vec3(0.0f, 0.0f, 1.0f));
+		glUniformMatrix4fv(uniTrans, 1, GL_FALSE, glm::value_ptr(cube_transform));
+		// Draw top cube
 		glDrawArrays(GL_TRIANGLES, 0, 36);
+		// Don't let floor block reflection
+		activate_stencil_buffer();
+		glDepthMask(GL_FALSE);
+		// Draw floor
+		transform = glm::rotate(transform, glm::radians(-10.0f * time), glm::vec3(0.0f, 0.0f, 1.0f));
+		glUniformMatrix4fv(uniTrans, 1, GL_FALSE, glm::value_ptr(transform));
+		glDrawArrays(GL_TRIANGLES, 36, 6);
+
+		// Draw inverted cube below floor
+		cube_transform = glm::scale(
+			glm::translate(cube_transform, glm::vec3(0, 0, -1)),
+			glm::vec3(1, 1, -1)
+		);
+		glUniformMatrix4fv(uniTrans, 1, GL_FALSE, glm::value_ptr(cube_transform));
+		// Don't extend reflection outside of floor
+		glStencilFunc(GL_EQUAL, 1, 0xFF); // Pass test if stencil value is 1
+		glStencilMask(0x00); // Don't write anything to stencil buffer
+		glDepthMask(GL_TRUE);
+		glUniform3f(uniColor, 0.3f, 0.3f, 0.3f);
+		glDrawArrays(GL_TRIANGLES, 0, 36);
+		glUniform3f(uniColor, 1.0f, 1.0f, 1.0f);
+		glDisable(GL_STENCIL_TEST);
+
 
 		// Flip Buffers and Draw
 		glfwSwapBuffers(mWindow);
