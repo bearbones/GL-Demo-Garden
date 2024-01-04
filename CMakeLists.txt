@@ -17,7 +17,6 @@ option(BUILD_EXTRAS OFF)
 option(BUILD_OPENGL3_DEMOS OFF)
 option(BUILD_UNIT_TESTS OFF)
 add_subdirectory(Glitter/Vendor/bullet)
-add_subdirectory(soil2)
 
 if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")

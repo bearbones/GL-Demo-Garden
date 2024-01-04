@@ -66,22 +66,22 @@ void define_vertex_attributes(GLuint shaderProgram) {
 		vertex_attrib_stride, (void*)(vertex_color_length + vertex_position_length));
 }
 
-void fill_vertex_element_buffers() {
-	/* Set up vertex array.
+void fill_scene_vertex_element_buffers() {
 	constexpr GLuint elements[] = {
 		0, 1, 2,
 		2, 3, 0,
 	};
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER,
 		sizeof(elements), elements, GL_STATIC_DRAW);
-	constexpr float vertices[] = {
+	// Vertices for a rectangle that represents the main viewport.
+	constexpr float frame_vertices[] = {
 	 -0.5f,  0.5f, 0.0f, RED_LITERAL_FLOATS, 0.0f, 0.0f,
 	  0.5f,  0.5f, 0.0f, GREEN_LITERAL_FLOATS, 1.0f, 0.0f,
 	  0.5f, -0.5f, 0.0f, BLUE_LITERAL_FLOATS, 1.0f, 1.0f,
 	 -0.5f, -0.5f, 0.0f, WHITE_LITERAL_FLOATS, 0.0f, 1.0f,
 	};
-	*/
-	constexpr GLfloat vertices[] = {
+
+	constexpr GLfloat scene_vertices[] = {
 	-0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
 	 0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
 	 0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
@@ -161,9 +161,7 @@ void activate_stencil_buffer() {
 	glClear(GL_STENCIL_BUFFER_BIT); // Clear stencil buffer (0 by default)
 }
 
-
-int main(int argc, char* argv[]) {
-
+void window_config() {
 	// Load GLFW and Create a Window
 	glfwInit();
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -171,6 +169,10 @@ int main(int argc, char* argv[]) {
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+}
+
+int main(int argc, char* argv[]) {
+	window_config();
 	auto mWindow = glfwCreateWindow(mWidth, mHeight, "OpenGL", nullptr, nullptr);
 
 	// Check for Valid Context
@@ -178,11 +180,14 @@ int main(int argc, char* argv[]) {
 		fprintf(stderr, "Failed to Create OpenGL Context");
 		return EXIT_FAILURE;
 	}
-
 	// Create Context and Load OpenGL Functions
 	glfwMakeContextCurrent(mWindow);
 	gladLoadGL();
 	fprintf(stderr, "OpenGL %s\n", glGetString(GL_VERSION));
+
+	GLuint frameBuffer;
+	glGenFramebuffers(1, &frameBuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
 
 	// Configs
 	// Enable Z-buffer
@@ -205,7 +210,7 @@ int main(int argc, char* argv[]) {
 	glBindTexture(GL_TEXTURE_2D, tex);
 	// channels refers to color channels per pixel, so 4 is RGBA, 3 is RGB.
 	int width, height, channels;
-	unsigned char * image = stbi_load("sample.png", &width, &height, &channels, 0);
+	unsigned char* image = stbi_load("sample.png", &width, &height, &channels, 0);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA,
 		GL_UNSIGNED_BYTE, image);
 	fprintf(stderr, "width: %d, height: %d\n", width, height);
@@ -220,6 +225,24 @@ int main(int argc, char* argv[]) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+	// Setup texture for holding a color buffer.
+	GLuint texture_color_buffer;
+	glGenTextures(1, &texture_color_buffer);
+	glBindTexture(GL_TEXTURE_2D, texture_color_buffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, mWidth, mHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	// Attach texture image to the framebuffer.
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_color_buffer, 0);
+
+	// Render buffer object for stencil/depth image for framebuffer.
+	GLuint rbo_depth_stencil;
+	glGenRenderbuffers(1, &rbo_depth_stencil);
+	glBindRenderbuffer(GL_RENDERBUFFER, rbo_depth_stencil);
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, mWidth, mHeight);
+
+	// Attach stencil and depth images to framebuffer.
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo_depth_stencil);
 
 	// Setup shaders.
 	GLuint shaderProgram = glCreateProgram();
@@ -248,8 +271,10 @@ int main(int argc, char* argv[]) {
 		auto t_now = std::chrono::high_resolution_clock::now();
 		float time = std::chrono::duration_cast<std::chrono::duration<float>>(t_now - t_start).count();
 
-		fill_vertex_element_buffers();
+		fill_scene_vertex_element_buffers();
 
+		// Make the internal framebuffer the render target.
+		glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
 		// Clear the screen to light grey 
 		glClearColor(0.75f, 0.85f, 0.95f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -282,11 +307,16 @@ int main(int argc, char* argv[]) {
 		glUniform3f(uniColor, 1.0f, 1.0f, 1.0f);
 		glDisable(GL_STENCIL_TEST);
 
+		fill_canvas_vertex_element_buffers();
+		// Make the screen framebuffer the render target.
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 		// Flip Buffers and Draw
 		glfwSwapBuffers(mWindow);
 		glfwPollEvents();
 	}
+	glDeleteFramebuffers(1, &frameBuffer);
+	glDeleteRenderbuffers(1, &rbo_depth_stencil);
 	glfwTerminate();
 	return EXIT_SUCCESS;
 }
