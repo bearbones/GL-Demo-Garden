@@ -2,10 +2,12 @@ import { Engine } from './engine/Engine';
 import { Plugin } from './plugin/Plugin';
 import { WobbyCellsPlugin } from './plugins/wobbly-cells';
 import { TuringPatternsPlugin } from './plugins/turing-patterns';
+import { BubblePhysicsPlugin } from './plugins/bubble-physics';
 
 const PLUGINS: Record<string, () => Plugin> = {
   'wobbly-cells': () => new WobbyCellsPlugin(),
   'turing-patterns': () => new TuringPatternsPlugin(),
+  'bubble-physics': () => new BubblePhysicsPlugin(),
 };
 
 const engine = new Engine();
