@@ -73,6 +73,40 @@ src/
         └── sdf2d.glsl       # sdCircle(), sdLine(), sdArc(), smooth booleans
 ```
 
+## Deployment — Cloudflare Pages
+
+The repo is pre-configured for Cloudflare Pages. `wrangler.toml` declares the project name and output directory; `public/_headers` ships cache and security headers with the static bundle.
+
+### Via the Cloudflare dashboard
+
+1. Connect the repo in **Workers & Pages → Create → Pages → Connect to Git**.
+2. Set the build settings:
+   - **Build command**: `npm run build`
+   - **Build output directory**: `dist`
+   - **Node.js version**: `20` (also declared in `.nvmrc`)
+3. Deploy. Subsequent pushes to `master` deploy automatically.
+
+### Via Wrangler CLI
+
+```bash
+npm install -g wrangler
+wrangler login
+npm run build
+wrangler pages deploy dist
+```
+
+### What ships
+
+| File | Purpose |
+|------|---------|
+| `wrangler.toml` | Project name, output dir, compatibility date |
+| `public/_headers` | `Cache-Control: immutable` for hashed assets; security headers on all routes |
+| `.nvmrc` | Pins Node 20 for the Pages build worker |
+
+Hashed asset filenames (e.g. `dist/assets/main-Cx3AbQd8.js`) are served with `max-age=31536000, immutable`. The HTML entry point is served with `no-cache` so browsers always revalidate it for new deploys.
+
+---
+
 ## Architecture Overview
 
 The engine follows a simple **plugin pattern**: each demo implements the `Plugin` interface and is completely responsible for its own GL resources. The engine provides timing, input, and a canvas; the plugin does everything else.
