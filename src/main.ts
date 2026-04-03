@@ -3,11 +3,17 @@ import { Plugin } from './plugin/Plugin';
 import { WobbyCellsPlugin } from './plugins/wobbly-cells';
 import { TuringPatternsPlugin } from './plugins/turing-patterns';
 import { BubblePhysicsPlugin } from './plugins/bubble-physics';
+import { RippleDropPlugin } from './plugins/ripple-drop';
+import { LaserBirdPlugin } from './plugins/laser-bird';
+import { BoatWakePlugin } from './plugins/boat-wake';
 
 const PLUGINS: Record<string, () => Plugin> = {
   'wobbly-cells': () => new WobbyCellsPlugin(),
   'turing-patterns': () => new TuringPatternsPlugin(),
   'bubble-physics': () => new BubblePhysicsPlugin(),
+  'ripple-drop': () => new RippleDropPlugin(),
+  'laser-bird': () => new LaserBirdPlugin(),
+  'boat-wake': () => new BoatWakePlugin(),
 };
 
 const engine = new Engine();
