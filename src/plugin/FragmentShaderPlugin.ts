@@ -41,7 +41,7 @@ export abstract class FragmentShaderPlugin implements Plugin {
   }
 
   onGesture(_ctx: EngineContext, event: GestureEvent) {
-    this.mousePos = [event.pos.x, event.pos.y];
+    this.mousePos = [event.pos.x, 1.0 - event.pos.y];
   }
 
   destroy(ctx: EngineContext) {
