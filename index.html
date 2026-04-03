@@ -10,6 +10,13 @@
   </style>
 </head>
 <body>
+  <p id="gl-error" style="color:#fff;font-family:system-ui,sans-serif;padding:2rem;display:none;"></p>
+  <script>
+    window.addEventListener('error', function(e) {
+      var el = document.getElementById('gl-error');
+      if (el) { el.textContent = 'Error: ' + e.message; el.style.display = 'block'; }
+    });
+  </script>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
