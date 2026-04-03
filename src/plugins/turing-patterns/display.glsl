@@ -11,21 +11,14 @@ void main() {
   float A = state.r;
   float B = state.g;
 
-  // Colormap: map concentrations to a nice palette
-  float v = A - B;
-  vec3 c1 = vec3(0.01, 0.02, 0.08); // deep blue-black
-  vec3 c2 = vec3(0.1, 0.3, 0.6);    // ocean blue
-  vec3 c3 = vec3(0.4, 0.8, 0.7);    // teal
-  vec3 c4 = vec3(0.95, 0.9, 0.8);   // warm white
+  // Map B concentration to pufferfish coloring:
+  // Low B → golden yellow (background), High B → dark blue-black (maze lines)
+  float t = smoothstep(0.05, 0.35, B);
 
-  vec3 color;
-  if (v < 0.33) {
-    color = mix(c1, c2, v / 0.33);
-  } else if (v < 0.66) {
-    color = mix(c2, c3, (v - 0.33) / 0.33);
-  } else {
-    color = mix(c3, c4, (v - 0.66) / 0.34);
-  }
+  vec3 gold   = vec3(0.85, 0.72, 0.20);  // golden yellow background
+  vec3 dark   = vec3(0.05, 0.06, 0.12);  // dark blue-black lines
+
+  vec3 color = mix(gold, dark, t);
 
   fragColor = vec4(color, 1.0);
 }

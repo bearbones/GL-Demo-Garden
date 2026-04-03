@@ -16,9 +16,9 @@ export class TuringPatternsPlugin implements Plugin {
   private mousePos: [number, number] = [0.5, 0.5];
   private mouseDown = 0;
 
-  // Gray-Scott parameters — "coral growth" preset
-  private feed = 0.0545;
-  private kill = 0.062;
+  // Gray-Scott parameters — "labyrinthine" preset (pufferfish-like maze pattern)
+  private feed = 0.037;
+  private kill = 0.06;
 
   init(ctx: EngineContext) {
     const { gl } = ctx;
@@ -57,12 +57,12 @@ export class TuringPatternsPlugin implements Plugin {
       void main() {
         float A = 1.0;
         float B = 0.0;
-        // Random scattered seeds
-        vec2 cell = floor(v_uv * 20.0);
+        // Dense random scattered seeds for labyrinthine pattern coverage
+        vec2 cell = floor(v_uv * 30.0);
         float r = hash(cell);
-        if (r > 0.85) {
-          float d = length(fract(v_uv * 20.0) - 0.5);
-          B = smoothstep(0.4, 0.1, d);
+        if (r > 0.65) {
+          float d = length(fract(v_uv * 30.0) - 0.5);
+          B = smoothstep(0.4, 0.05, d);
         }
         fragColor = vec4(A, B, 0.0, 1.0);
       }
@@ -86,7 +86,7 @@ export class TuringPatternsPlugin implements Plugin {
 
   render(ctx: EngineContext) {
     const { gl } = ctx;
-    const stepsPerFrame = 8;
+    const stepsPerFrame = 12;
 
     gl.bindVertexArray(this.vao);
 
