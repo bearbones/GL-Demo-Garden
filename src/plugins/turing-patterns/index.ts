@@ -86,7 +86,7 @@ export class TuringPatternsPlugin implements Plugin {
 
   render(ctx: EngineContext) {
     const { gl } = ctx;
-    const stepsPerFrame = 12;
+    const stepsPerFrame = 8;
 
     gl.bindVertexArray(this.vao);
 

@@ -28,8 +28,8 @@ void main() {
   float lapB = (L.g + R.g + U.g + D.g) - 4.0 * B;
 
   // Gray-Scott reaction-diffusion
-  float dA = 1.0;   // Diffusion rate for A
-  float dB = 0.5;   // Diffusion rate for B
+  float dA = 0.5;   // Diffusion rate for A
+  float dB = 0.25;  // Diffusion rate for B
   float reaction = A * B * B;
 
   float newA = A + (dA * lapA - reaction + u_feed * (1.0 - A)) * u_dt;

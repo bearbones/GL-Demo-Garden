@@ -32,6 +32,11 @@ void main() {
   float hNext = 2.0 * h - hPrev + c2 * laplacian;
   hNext *= u_damping;
 
+  // Clamp to prevent numerical blowup at high wave speeds
+  hNext = clamp(hNext, -1.0, 1.0);
+  // Snap near-zero values to zero so water fully resets
+  hNext *= step(0.0001, abs(hNext));
+
   // Apply impulse if click happened
   if (u_impulsePos.x >= 0.0) {
     float dist = length(v_uv - u_impulsePos);
