@@ -1,0 +1,17 @@
+# Cloudflare Pages HTTP response headers
+# https://developers.cloudflare.com/pages/configuration/headers/
+
+# ── Hashed assets (Vite content-hashes all filenames in dist/assets/) ──────
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# ── HTML entry point — always revalidate ────────────────────────────────────
+/index.html
+  Cache-Control: no-cache
+
+# ── Security headers applied to every response ──────────────────────────────
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: interest-cohort=()
