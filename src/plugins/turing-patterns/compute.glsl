@@ -18,18 +18,23 @@ void main() {
   float A = state.r;
   float B = state.g;
 
-  // 5-point Laplacian stencil
-  vec4 L = texture(u_state, v_uv + vec2(-u_texelSize.x, 0.0));
-  vec4 R = texture(u_state, v_uv + vec2( u_texelSize.x, 0.0));
-  vec4 U = texture(u_state, v_uv + vec2(0.0,  u_texelSize.y));
-  vec4 D = texture(u_state, v_uv + vec2(0.0, -u_texelSize.y));
+  // 9-point Laplacian stencil (weighted, more isotropic)
+  vec2 tx = u_texelSize;
+  vec4 L  = texture(u_state, v_uv + vec2(-tx.x,  0.0));
+  vec4 R  = texture(u_state, v_uv + vec2( tx.x,  0.0));
+  vec4 U  = texture(u_state, v_uv + vec2( 0.0,   tx.y));
+  vec4 D  = texture(u_state, v_uv + vec2( 0.0,  -tx.y));
+  vec4 LU = texture(u_state, v_uv + vec2(-tx.x,  tx.y));
+  vec4 RU = texture(u_state, v_uv + vec2( tx.x,  tx.y));
+  vec4 LD = texture(u_state, v_uv + vec2(-tx.x, -tx.y));
+  vec4 RD = texture(u_state, v_uv + vec2( tx.x, -tx.y));
 
-  float lapA = (L.r + R.r + U.r + D.r) - 4.0 * A;
-  float lapB = (L.g + R.g + U.g + D.g) - 4.0 * B;
+  float lapA = 0.2 * (L.r + R.r + U.r + D.r) + 0.05 * (LU.r + RU.r + LD.r + RD.r) - 1.0 * A;
+  float lapB = 0.2 * (L.g + R.g + U.g + D.g) + 0.05 * (LU.g + RU.g + LD.g + RD.g) - 1.0 * B;
 
   // Gray-Scott reaction-diffusion
-  float dA = 0.5;   // Diffusion rate for A
-  float dB = 0.25;  // Diffusion rate for B
+  float dA = 1.0;    // Diffusion rate for A
+  float dB = 0.5;    // Diffusion rate for B
   float reaction = A * B * B;
 
   float newA = A + (dA * lapA - reaction + u_feed * (1.0 - A)) * u_dt;
