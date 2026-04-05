@@ -28,6 +28,8 @@ export class BoatWakePlugin implements Plugin {
   private foamDecay = 0.985;
   private curlIntensity = 1.0;
   private strokeBoldness = 1.0;
+  private cameraZoom = 3.5;
+  private whorlIntensity = 1.0;
 
   // Boat state
   private boatPos: [number, number] = [0.5, 0.5];
@@ -56,6 +58,7 @@ export class BoatWakePlugin implements Plugin {
     ]);
     this.dispU = this.getUniforms(gl, this.displayProgram, [
       'u_foam', 'u_resolution', 'u_time', 'u_strokeBoldness', 'u_boatPos',
+      'u_boatDir', 'u_zoom', 'u_aspect', 'u_whorlIntensity', 'u_boatSpeed',
     ]);
 
     this.sliders = new ParamSlider();
@@ -74,6 +77,14 @@ export class BoatWakePlugin implements Plugin {
     this.sliders.addSlider({
       label: 'Stroke Bold', min: 0.2, max: 3.0, value: this.strokeBoldness,
       onChange: (v) => { this.strokeBoldness = v; },
+    });
+    this.sliders.addSlider({
+      label: 'Camera Zoom', min: 2.0, max: 6.0, value: this.cameraZoom,
+      onChange: (v) => { this.cameraZoom = v; },
+    });
+    this.sliders.addSlider({
+      label: 'Whorl Intensity', min: 0.0, max: 2.0, value: this.whorlIntensity,
+      onChange: (v) => { this.whorlIntensity = v; },
     });
   }
 
@@ -107,26 +118,54 @@ export class BoatWakePlugin implements Plugin {
 
     gl.useProgram(this.displayProgram);
     this.fbo.bindRead(gl, 0);
+    // Smooth sampling and clamp for zoomed display
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
     gl.uniform1i(this.dispU.u_foam, 0);
     gl.uniform2f(this.dispU.u_resolution, ctx.width, ctx.height);
     gl.uniform1f(this.dispU.u_time, ctx.time);
     gl.uniform1f(this.dispU.u_strokeBoldness, this.strokeBoldness);
     gl.uniform2f(this.dispU.u_boatPos, this.boatPos[0], this.boatPos[1]);
+    gl.uniform2f(this.dispU.u_boatDir, this.boatDir[0], this.boatDir[1]);
+    gl.uniform1f(this.dispU.u_zoom, this.cameraZoom);
+    gl.uniform1f(this.dispU.u_aspect, ctx.width / ctx.height);
+    gl.uniform1f(this.dispU.u_whorlIntensity, this.whorlIntensity);
+    gl.uniform1f(this.dispU.u_boatSpeed, this.boatSpeed);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // Restore texture params for next sim pass
+    this.fbo.bindRead(gl, 0);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
   }
 
-  onGesture(_ctx: EngineContext, event: GestureEvent) {
+  onGesture(ctx: EngineContext, event: GestureEvent) {
+    const screenToSim = (sx: number, sy: number): [number, number] => {
+      const aspect = ctx.width / ctx.height;
+      let dx = (sx - 0.5) * aspect / this.cameraZoom;
+      let dy = (sy - 0.85) / this.cameraZoom;
+      // Rotate by +boatAngle (inverse of display rotation)
+      const cosA = this.boatDir[1];
+      const sinA = this.boatDir[0];
+      return [
+        this.boatPos[0] + cosA * dx - sinA * dy,
+        this.boatPos[1] + sinA * dx + cosA * dy,
+      ];
+    };
+
     if (event.type === 'drag-start' || event.type === 'drag-move') {
       this.userControlled = true;
-      this.targetPos = [event.pos.x, 1.0 - event.pos.y];
+      this.targetPos = screenToSim(event.pos.x, 1.0 - event.pos.y);
     } else if (event.type === 'drag-end') {
       this.userControlled = false;
       this.targetPos = null;
     } else if (event.type === 'tap') {
-      this.targetPos = [event.pos.x, 1.0 - event.pos.y];
+      this.targetPos = screenToSim(event.pos.x, 1.0 - event.pos.y);
       this.userControlled = true;
-      // Release after reaching target
       setTimeout(() => { this.userControlled = false; this.targetPos = null; }, 2000);
     }
   }
