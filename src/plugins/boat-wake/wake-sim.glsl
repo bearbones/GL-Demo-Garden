@@ -16,8 +16,8 @@ uniform float u_curlIntensity;
 uniform float u_time;
 
 // ── Constants ───────────────────────────────────────────────────────
-const float WAKE_HALF_ANGLE = 0.34;  // ~19.5 degrees in radians
-const float FOAM_EMIT_RADIUS = 0.03;
+const float WAKE_HALF_ANGLE = 0.48;  // ~27.5 degrees, wider for anime drama
+const float FOAM_EMIT_RADIUS = 0.05; // Larger hull foam for zoomed view
 const float DIFFUSION = 0.3;
 const float ADVECTION = 0.5;
 
