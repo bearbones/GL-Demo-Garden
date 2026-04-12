@@ -84,6 +84,14 @@ export class TuringPatternsPlugin implements Plugin {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
+  resize(ctx: EngineContext) {
+    const { gl } = ctx;
+    const simW = Math.floor(ctx.width / 2);
+    const simH = Math.floor(ctx.height / 2);
+    this.pingPong.resize(gl, simW, simH);
+    this.seedState(ctx);
+  }
+
   render(ctx: EngineContext) {
     const { gl } = ctx;
     const stepsPerFrame = 12;

@@ -87,6 +87,20 @@ export class LaserBirdPlugin implements Plugin {
     });
   }
 
+  resize(ctx: EngineContext) {
+    const { gl } = ctx;
+
+    // Recreate scene FBO at new canvas size
+    gl.deleteFramebuffer(this.sceneFBO.fbo);
+    gl.deleteTexture(this.sceneFBO.tex);
+    this.sceneFBO = this.createFBO(gl, ctx.width, ctx.height);
+
+    // Resize bloom FBO at half res
+    const bw = Math.floor(ctx.width * BLOOM_SCALE);
+    const bh = Math.floor(ctx.height * BLOOM_SCALE);
+    this.bloomFBO.resize(gl, bw, bh);
+  }
+
   render(ctx: EngineContext) {
     const { gl } = ctx;
     gl.bindVertexArray(this.vao);

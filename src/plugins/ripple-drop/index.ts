@@ -74,6 +74,13 @@ export class RippleDropPlugin implements Plugin {
     });
   }
 
+  resize(ctx: EngineContext) {
+    const { gl } = ctx;
+    const simW = Math.floor(ctx.width * SIM_SCALE);
+    const simH = Math.floor(ctx.height * SIM_SCALE);
+    this.fbo.resize(gl, simW, simH);
+  }
+
   render(ctx: EngineContext) {
     const { gl } = ctx;
 
