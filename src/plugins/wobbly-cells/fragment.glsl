@@ -56,7 +56,10 @@ void main() {
   }
 
   // Edge detection from distance difference
-  float edge = smoothstep(0.02, 0.06, secondDist - minDist);
+  float diff = secondDist - minDist;
+  float aa = fwidth(diff);
+  float borderW = 0.04;
+  float edge = smoothstep(borderW - aa, borderW + aa, diff);
 
   // Color palette
   vec3 baseColor = 0.5 + 0.5 * cos(6.2831 * (cellColor + vec3(0.0, 0.33, 0.67)) + u_time * 0.3);
