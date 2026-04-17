@@ -7,19 +7,34 @@ import bubbleVert from './bubble.vert';
 import bubbleFrag from './bubble.frag';
 
 // ── Tuning constants ────────────────────────────────────────────────
-const MAX_BUBBLES = 400;
-const SPAWN_RATE = 3;              // bubbles per frame
+const MAX_BUBBLES = 600;
+const SPAWN_RATE_PER_SEC = 220;     // framerate-independent
 const BUBBLE_MIN_R = 2.5;
 const BUBBLE_MAX_R = 7;
-const BUOYANCY = 60;               // px/s²
+
+// Forces (px/s²)
+const BUOYANCY = 180;               // dominant upward force
+const DRAG_COEF = 1.2;               // linear F = -k·v (replaces multiplicative drag)
 const WOBBLE_FREQ = 2.5;
-const WOBBLE_AMP = 18;             // px/s
-const DRAG = 0.985;
-const CURSOR_CIRCLE_R = 70;        // px (CSS)
-const REPULSE_RANGE = 1.6;         // × circle radius
-const REPULSE_STRENGTH = 400;      // px/s²
-const STICK_ANGLE_MAX = Math.PI / 3;  // 60° from bottom
-const DETACH_SPEED = 40;           // px/s upward kick on release
+const WOBBLE_AMP = 55;              // broader lateral scatter
+
+// Initial launch velocity
+const INIT_VY_MIN = 40;
+const INIT_VY_SPREAD = 60;
+const INIT_VX_SPREAD = 40;
+
+// Cursor circle interaction
+const CURSOR_CIRCLE_R = 70;         // CSS px
+const ADHESION_RANGE = 12;          // px outside surface
+const ADHESION_STRENGTH = 110;      // < BUOYANCY so only the bottom pole holds
+const REPULSE_DEPTH = 6;            // px scale of the interior wall
+const REPULSE_STRENGTH = 2000;      // stiff wall to keep bubbles outside the circle
+
+// Bubble-bubble cohesion / separation
+const COHESION_RADIUS = 16;
+const COHESION_STRENGTH = 40;
+const COHESION_DAMP = 0.85;         // relative-velocity damping on contact
+const SEPARATION_STRENGTH = 220;
 
 // ── Bubble data ─────────────────────────────────────────────────────
 
@@ -29,13 +44,6 @@ interface Bubble {
   radius: number;
   wobblePhase: number;
   opacity: number;
-  stuck: boolean;
-  /** 'circle' = stuck to cursor circle, or index of layer-1 bubble */
-  stuckTo: 'circle' | number;
-  /** Angle on the parent where this bubble is attached (0 = straight down) */
-  stuckAngle: number;
-  /** 0 = free, 1 = on circle, 2 = on a layer-1 bubble */
-  stuckLayer: 0 | 1 | 2;
 }
 
 export class BubblePhysicsPlugin implements Plugin {
@@ -51,6 +59,13 @@ export class BubblePhysicsPlugin implements Plugin {
   // Particle state
   private bubbles: Bubble[] = [];
   private instanceData = new Float32Array(MAX_BUBBLES * 4);
+
+  // Force accumulators (reused each frame)
+  private fxBuf = new Float32Array(MAX_BUBBLES);
+  private fyBuf = new Float32Array(MAX_BUBBLES);
+
+  // Spawn accumulator for rate-per-second spawning
+  private spawnAccum = 0;
 
   // Pointer state (own listeners for hold-in-place support)
   private pointerActive = false;
@@ -113,7 +128,6 @@ export class BubblePhysicsPlugin implements Plugin {
     };
     this.onUp = (_e: PointerEvent) => {
       this.pointerActive = false;
-      this.releaseBubbles();
     };
 
     canvas.addEventListener('pointerdown', this.onDown);
@@ -123,6 +137,7 @@ export class BubblePhysicsPlugin implements Plugin {
     canvas.style.touchAction = 'none';
 
     this.bubbles = [];
+    this.spawnAccum = 0;
   }
 
   private updatePointerPx(e: PointerEvent, canvas: HTMLCanvasElement) {
@@ -184,22 +199,21 @@ export class BubblePhysicsPlugin implements Plugin {
   // ── Spawn ───────────────────────────────────────────────────────
 
   private spawnBubbles(ctx: EngineContext) {
-    if (this.bubbles.length >= MAX_BUBBLES) return;
-    for (let i = 0; i < SPAWN_RATE; i++) {
-      if (this.bubbles.length >= MAX_BUBBLES) break;
+    this.spawnAccum += SPAWN_RATE_PER_SEC * ctx.dt;
+    // Cap backlog so hidden tabs don't unleash a flood on return
+    if (this.spawnAccum > 5) this.spawnAccum = 5;
+
+    while (this.spawnAccum >= 1 && this.bubbles.length < MAX_BUBBLES) {
+      this.spawnAccum -= 1;
       const radius = BUBBLE_MIN_R + Math.random() * (BUBBLE_MAX_R - BUBBLE_MIN_R);
       this.bubbles.push({
         x: Math.random() * ctx.width,
-        y: ctx.height + radius, // start just below bottom edge
-        vx: (Math.random() - 0.5) * 10,
-        vy: -(20 + Math.random() * 30), // initial upward speed
+        y: ctx.height + radius,
+        vx: (Math.random() - 0.5) * INIT_VX_SPREAD,
+        vy: -(INIT_VY_MIN + Math.random() * INIT_VY_SPREAD),
         radius,
         wobblePhase: Math.random() * Math.PI * 2,
         opacity: 0.25 + Math.random() * 0.4,
-        stuck: false,
-        stuckTo: 'circle',
-        stuckAngle: 0,
-        stuckLayer: 0,
       });
     }
   }
@@ -207,59 +221,89 @@ export class BubblePhysicsPlugin implements Plugin {
   // ── Physics ─────────────────────────────────────────────────────
 
   private updatePhysics(ctx: EngineContext) {
-    const dt = Math.min(ctx.dt, 0.05); // clamp large dt
+    const dt = Math.min(ctx.dt, 0.033);
     const [cx, cy] = this.pointerPx;
     const cr = this.circleR;
+    const bubbles = this.bubbles;
+    const n = bubbles.length;
+    const fx = this.fxBuf;
+    const fy = this.fyBuf;
 
-    for (let i = this.bubbles.length - 1; i >= 0; i--) {
-      const b = this.bubbles[i];
+    // Zero force buffers
+    for (let i = 0; i < n; i++) { fx[i] = 0; fy[i] = 0; }
 
-      if (b.stuck) {
-        this.updateStuckBubble(b, i);
-        continue;
-      }
+    // 1. Buoyancy + wobble + linear drag
+    for (let i = 0; i < n; i++) {
+      const b = bubbles[i];
+      fy[i] -= BUOYANCY;
+      fx[i] += Math.sin(ctx.time * WOBBLE_FREQ + b.wobblePhase) * WOBBLE_AMP;
+      fx[i] -= DRAG_COEF * b.vx;
+      fy[i] -= DRAG_COEF * b.vy;
+    }
 
-      // Buoyancy
-      b.vy -= BUOYANCY * dt;
-
-      // Wobble
-      b.vx += Math.sin(ctx.time * WOBBLE_FREQ + b.wobblePhase) * WOBBLE_AMP * dt;
-
-      // Drag
-      b.vx *= DRAG;
-      b.vy *= DRAG;
-
-      // Pointer interaction
-      if (this.pointerActive) {
+    // 2. Pointer adhesion (outside surface) + interior repulsion
+    if (this.pointerActive) {
+      for (let i = 0; i < n; i++) {
+        const b = bubbles[i];
         const dx = b.x - cx;
         const dy = b.y - cy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const touchDist = cr + b.radius;
-        const repulseDist = cr * REPULSE_RANGE;
+        const d = Math.hypot(dx, dy) || 1e-4;
+        const surfGap = d - (cr + b.radius);
+        const nx = dx / d;
+        const ny = dy / d;
 
-        // Check sticking: bubble is below cursor and rising toward it
-        if (b.vy < 0 && dy > 0 && dist < touchDist + 4) {
-          // Angle from cursor center to bubble, measured from straight down (0 = directly below)
-          const angle = Math.atan2(dx, dy); // note: atan2(x, y) gives angle from +y axis
-          if (Math.abs(angle) < STICK_ANGLE_MAX) {
-            if (this.tryStickToCircle(b, i, angle)) continue;
-          }
-        }
-
-        // Check sticking to layer-1 bubbles (forming layer 2)
-        if (b.vy < 0 && this.pointerActive) {
-          if (this.tryStickToLayer1(b, i)) continue;
-        }
-
-        // Repulsion (push away from circle)
-        if (dist < repulseDist && dist > 0.1) {
-          const force = REPULSE_STRENGTH * (1.0 - dist / repulseDist);
-          b.vx += (dx / dist) * force * dt;
-          b.vy += (dy / dist) * force * dt;
+        if (surfGap < 0) {
+          // Stiff interior wall — bubbles should not enter the circle
+          const push = REPULSE_STRENGTH * (-surfGap / REPULSE_DEPTH + 1);
+          fx[i] += nx * push;
+          fy[i] += ny * push;
+        } else if (surfGap < ADHESION_RANGE) {
+          // Weak attraction toward the surface, fading with distance
+          const pull = ADHESION_STRENGTH * (1 - surfGap / ADHESION_RANGE);
+          fx[i] -= nx * pull;
+          fy[i] -= ny * pull;
         }
       }
+    }
 
-      // Integrate position
+    // 3. Cohesion + separation + contact damping (O(n²) with cheap early-out)
+    for (let i = 0; i < n; i++) {
+      const a = bubbles[i];
+      for (let j = i + 1; j < n; j++) {
+        const b = bubbles[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const d2 = dx * dx + dy * dy;
+        const rSum = a.radius + b.radius;
+        const cohR = COHESION_RADIUS + rSum;
+        if (d2 > cohR * cohR) continue;
+        const d = Math.sqrt(d2) || 1e-4;
+        const nx = dx / d;
+        const ny = dy / d;
+
+        if (d < rSum) {
+          // Overlap — hard separation plus relative-velocity damping
+          const s = SEPARATION_STRENGTH * (rSum - d);
+          fx[i] -= nx * s; fy[i] -= ny * s;
+          fx[j] += nx * s; fy[j] += ny * s;
+          const rvx = b.vx - a.vx;
+          const rvy = b.vy - a.vy;
+          a.vx += rvx * COHESION_DAMP * dt; a.vy += rvy * COHESION_DAMP * dt;
+          b.vx -= rvx * COHESION_DAMP * dt; b.vy -= rvy * COHESION_DAMP * dt;
+        } else {
+          // Soft cohesion in the near band
+          const c = COHESION_STRENGTH * (1 - (d - rSum) / COHESION_RADIUS);
+          fx[i] += nx * c; fy[i] += ny * c;
+          fx[j] -= nx * c; fy[j] -= ny * c;
+        }
+      }
+    }
+
+    // 4. Integrate
+    for (let i = n - 1; i >= 0; i--) {
+      const b = bubbles[i];
+      b.vx += fx[i] * dt;
+      b.vy += fy[i] * dt;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
 
@@ -269,119 +313,8 @@ export class BubblePhysicsPlugin implements Plugin {
 
       // Remove if above top
       if (b.y < -b.radius * 2) {
-        this.bubbles.splice(i, 1);
+        bubbles.splice(i, 1);
       }
-    }
-  }
-
-  private tryStickToCircle(b: Bubble, _index: number, angle: number): boolean {
-    // Count how many layer-1 bubbles are near this angle
-    let nearby = 0;
-    for (const other of this.bubbles) {
-      if (other.stuck && other.stuckLayer === 1) {
-        const angleDiff = Math.abs(other.stuckAngle - angle);
-        // Check if too close to existing stuck bubble
-        if (angleDiff < (b.radius + other.radius) / this.circleR * 0.9) {
-          nearby++;
-        }
-      }
-    }
-    // Don't stack too densely
-    if (nearby > 0) return false;
-
-    b.stuck = true;
-    b.stuckTo = 'circle';
-    b.stuckAngle = angle;
-    b.stuckLayer = 1;
-    b.vx = 0;
-    b.vy = 0;
-    return true;
-  }
-
-  private tryStickToLayer1(b: Bubble, _index: number): boolean {
-    const [cx, cy] = this.pointerPx;
-
-    for (let j = 0; j < this.bubbles.length; j++) {
-      const parent = this.bubbles[j];
-      if (!parent.stuck || parent.stuckLayer !== 1) continue;
-
-      const dx = b.x - parent.x;
-      const dy = b.y - parent.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const touchDist = b.radius + parent.radius;
-
-      if (dist < touchDist + 3 && dy > 0 && b.vy < 0) {
-        // Angle from parent center to bubble, from straight down
-        const angle = Math.atan2(dx, dy);
-        if (Math.abs(angle) > STICK_ANGLE_MAX) continue;
-
-        // Check the contact point relative to the cursor circle is still
-        // in the lower hemisphere (tangent near horizontal)
-        const contactX = parent.x + Math.sin(angle) * touchDist;
-        const contactY = parent.y + Math.cos(angle) * touchDist;
-        const dcx = contactX - cx;
-        const dcy = contactY - cy;
-        const contactAngle = Math.atan2(dcx, dcy);
-        if (Math.abs(contactAngle) > STICK_ANGLE_MAX * 1.2) continue;
-
-        // Check layer-2 density near this parent
-        let layer2Count = 0;
-        for (const o of this.bubbles) {
-          if (o.stuck && o.stuckLayer === 2 && o.stuckTo === j) layer2Count++;
-        }
-        if (layer2Count >= 2) continue;
-
-        b.stuck = true;
-        b.stuckTo = j;
-        b.stuckAngle = angle;
-        b.stuckLayer = 2;
-        b.vx = 0;
-        b.vy = 0;
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private updateStuckBubble(b: Bubble, index: number) {
-    if (b.stuckLayer === 1) {
-      // Attached to cursor circle
-      const [cx, cy] = this.pointerPx;
-      const dist = this.circleR + b.radius;
-      // stuckAngle: 0 = directly below, positive = right
-      b.x = cx + Math.sin(b.stuckAngle) * dist;
-      b.y = cy + Math.cos(b.stuckAngle) * dist;
-    } else if (b.stuckLayer === 2 && typeof b.stuckTo === 'number') {
-      const parent = this.bubbles[b.stuckTo];
-      if (!parent || !parent.stuck) {
-        // Parent detached — detach this too
-        b.stuck = false;
-        b.stuckLayer = 0;
-        b.vy = -(DETACH_SPEED * 0.5);
-        return;
-      }
-      const dist = parent.radius + b.radius;
-      b.x = parent.x + Math.sin(b.stuckAngle) * dist;
-      b.y = parent.y + Math.cos(b.stuckAngle) * dist;
-    }
-
-    // If pointer released while iterating, unstick was already called,
-    // but guard against stale index references
-    if (!this.pointerActive && b.stuck) {
-      b.stuck = false;
-      b.stuckLayer = 0;
-      b.vy = -(DETACH_SPEED + Math.random() * 15);
-      b.vx = (Math.random() - 0.5) * 20;
-    }
-  }
-
-  private releaseBubbles() {
-    for (const b of this.bubbles) {
-      if (!b.stuck) continue;
-      b.stuck = false;
-      b.stuckLayer = 0;
-      b.vy = -(DETACH_SPEED + Math.random() * 20);
-      b.vx = (Math.random() - 0.5) * 30;
     }
   }
 
