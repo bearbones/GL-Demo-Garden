@@ -283,6 +283,27 @@ float next = mix(prev, diffused, 0.3) * decay;
 
 The display shader reads foam density, then applies `inkStroke()` on the gradient and `posterize()` on the foam body to achieve the ukiyo-e woodblock aesthetic — bold flat-colour wave areas separated by dark ink outlines.
 
+### Bubble Physics
+
+CPU particle simulation with instanced GPU rendering. Up to 600 bubbles rise from the bottom under a force-accumulator model:
+
+- **Buoyancy** (180 px/s²) is the dominant upward force.
+- **Linear drag** (`F = -1.2·v`) gives a terminal rise velocity around 150 px/s.
+- **Wobble**: per-bubble phased sinusoid adds lateral scatter.
+- **Cohesion / separation**: O(n²) neighbour pass (early-out by squared distance) applies soft attraction in the near band and stiff separation on overlap, plus relative-velocity damping on contact so knocks don't fling clusters apart.
+- **Cursor circle** (tap-and-hold): an adhesion force (110 px/s²) attracts bubbles toward the surface within 12 px, and a stiff interior wall (2000 px/s²) keeps them outside. Because adhesion < buoyancy, bubbles only linger where adhesion aligns with buoyancy — at the bottom pole. On the sides and top, buoyancy wins and they slip past. A rising bubble striking clingers transfers momentum via the separation impulse; cohesion damping resettles the cluster.
+
+Rendering is a single instanced draw of per-bubble quads; the fragment shader draws each bubble as an independent disc with rim light and two specular highlights.
+
+#### Deferred: foam-style flattened contact edges
+
+The current renderer treats each bubble independently, so touching bubbles show two circular boundaries rather than a shared flattened contact line. Adding a soap-foam look requires cross-bubble awareness that a per-instance fragment shader cannot provide in one pass. A future session should implement a two-pass metaball composite:
+
+1. **Density pass**: render each bubble (and the cursor circle) as a radial falloff into an offscreen `RGBA16F` FBO at canvas resolution, using additive blending. The R channel accumulates density.
+2. **Shade pass**: a fullscreen quad samples the density texture and shades pixels where `density > threshold`, using `smoothstep(threshold, threshold + edgeWidth, density)` for antialiased edges. A surface normal derived from `dFdx`/`dFdy` of density drives rim light and specular. Where two bubbles overlap, summed densities cross the threshold between their centres, producing the flattened shared edge; isolated bubbles retain their round silhouette.
+
+Requirements: FBO must be recreated on resize, must match DPR-scaled canvas dimensions. Keep `background.glsl` unchanged and composite bubbles on top. Estimated scope: new `metaball.frag` and `composite.frag`, ~120–180 LOC in the plugin including FBO lifecycle in `init()`/`destroy()`.
+
 ---
 
 ## Adding a New Plugin
