@@ -7,16 +7,23 @@ import bubbleVert from './bubble.vert';
 import bubbleFrag from './bubble.frag';
 
 // ── Tuning constants ────────────────────────────────────────────────
-const MAX_BUBBLES = 600;
-const SPAWN_RATE_PER_SEC = 220;     // framerate-independent
+// MAX_BUBBLES sits above the steady-state count (≈ SPAWN_RATE / v_term * height)
+// so the spawner never hits the cap and emits in bursts.
+const MAX_BUBBLES = 900;
+const SPAWN_RATE_PER_SEC = 200;     // framerate-independent
 const BUBBLE_MIN_R = 2.5;
 const BUBBLE_MAX_R = 7;
 
 // Forces (px/s²)
-const BUOYANCY = 180;               // dominant upward force
+const BUOYANCY = 340;               // dominant upward force
 const DRAG_COEF = 1.2;               // linear F = -k·v (replaces multiplicative drag)
 const WOBBLE_FREQ = 2.5;
-const WOBBLE_AMP = 55;              // broader lateral scatter
+const WOBBLE_AMP = 55;              // primary lateral wobble
+
+// Turbulence: slower, per-bubble lateral drift (plus a touch of vertical)
+const TURBULENCE_FREQ = 0.9;
+const TURBULENCE_AMP = 40;
+const TURBULENCE_VY_AMP = 14;
 
 // Initial launch velocity
 const INIT_VY_MIN = 40;
@@ -25,16 +32,16 @@ const INIT_VX_SPREAD = 40;
 
 // Cursor circle interaction
 const CURSOR_CIRCLE_R = 70;         // CSS px
-const ADHESION_RANGE = 12;          // px outside surface
-const ADHESION_STRENGTH = 110;      // < BUOYANCY so only the bottom pole holds
+const ADHESION_RANGE = 22;          // px outside surface
+const ADHESION_STRENGTH = 210;      // < BUOYANCY so only the bottom pole holds
 const REPULSE_DEPTH = 6;            // px scale of the interior wall
 const REPULSE_STRENGTH = 2000;      // stiff wall to keep bubbles outside the circle
 
 // Bubble-bubble cohesion / separation
 const COHESION_RADIUS = 16;
-const COHESION_STRENGTH = 40;
+const COHESION_STRENGTH = 32;
 const COHESION_DAMP = 0.85;         // relative-velocity damping on contact
-const SEPARATION_STRENGTH = 220;
+const SEPARATION_STRENGTH = 95;     // gentle contact spring — no hard bounce
 
 // ── Bubble data ─────────────────────────────────────────────────────
 
@@ -232,11 +239,14 @@ export class BubblePhysicsPlugin implements Plugin {
     // Zero force buffers
     for (let i = 0; i < n; i++) { fx[i] = 0; fy[i] = 0; }
 
-    // 1. Buoyancy + wobble + linear drag
+    // 1. Buoyancy + wobble + turbulence + linear drag
     for (let i = 0; i < n; i++) {
       const b = bubbles[i];
       fy[i] -= BUOYANCY;
       fx[i] += Math.sin(ctx.time * WOBBLE_FREQ + b.wobblePhase) * WOBBLE_AMP;
+      // Slower, decorrelated lateral drift for a more natural rise
+      fx[i] += Math.sin(ctx.time * TURBULENCE_FREQ + b.wobblePhase * 1.7) * TURBULENCE_AMP;
+      fy[i] += Math.cos(ctx.time * TURBULENCE_FREQ * 0.6 + b.wobblePhase * 2.3) * TURBULENCE_VY_AMP;
       fx[i] -= DRAG_COEF * b.vx;
       fy[i] -= DRAG_COEF * b.vy;
     }
