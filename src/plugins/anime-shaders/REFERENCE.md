@@ -167,7 +167,7 @@ As a bubble drains, the film thins from top to bottom, cycling through the visib
 
 ### Per-Demo Palettes
 - **Water Ripple**: deep navy (#0a0e2a) base, pale blue-white (#c8deff) strokes, subtle teal undertone
-- **Laser Bird**: night sky (#050818), magenta core (#ff3ca0), pink bloom (#ff80c0), warm fringe (#ffa060), starfield whites
+- **Swallowtail Butterfly**: night sky (#050818), magenta core (#ff3ca0), violet fringe (#9f73ff), gold wing veins (#ffe68c), warm bloom (#ffa060), starfield whites
 - **Boat Wake**: teal water (#1a4a5a), deep blue (#0d2840), white foam (#e8f0ff), bold outline (#1a2a3a)
 
 ## Particle / Petal Effects
@@ -224,7 +224,7 @@ A 2D Gaussian kernel of radius `r` requires `O(r²)` texture samples per pixel. 
 G(x,y) = G(x) · G(y)
 ```
 
-This reduces cost to `O(r)` samples per pass × 2 passes = `O(2r)` total, which makes large-radius bloom feasible. Laser Bird uses this with a half-resolution intermediate FBO: render scene at full res → downsample → blur H → blur V → composite back at full res.
+This reduces cost to `O(r)` samples per pass × 2 passes = `O(2r)` total, which makes large-radius bloom feasible. Swallowtail Butterfly uses this with a half-resolution intermediate FBO: render scene at full res → downsample → blur H → blur V → composite back at full res.
 
 ### Additive Compositing
 

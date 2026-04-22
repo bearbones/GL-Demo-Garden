@@ -4,7 +4,7 @@ import { WobbyCellsPlugin } from './plugins/wobbly-cells';
 import { TuringPatternsPlugin } from './plugins/turing-patterns';
 import { BubblePhysicsPlugin } from './plugins/bubble-physics';
 import { RippleDropPlugin } from './plugins/ripple-drop';
-import { LaserBirdPlugin } from './plugins/laser-bird';
+import { SwallowtailButterflyPlugin } from './plugins/swallowtail-butterfly';
 import { SeaMeltPlugin } from './plugins/sea-melt';
 import { GlassWaterPlugin } from './plugins/glass-water';
 
@@ -13,7 +13,7 @@ const PLUGINS: Record<string, () => Plugin> = {
   'turing-patterns': () => new TuringPatternsPlugin(),
   'bubble-physics': () => new BubblePhysicsPlugin(),
   'ripple-drop': () => new RippleDropPlugin(),
-  'laser-bird': () => new LaserBirdPlugin(),
+  'swallowtail-butterfly': () => new SwallowtailButterflyPlugin(),
   'sea-melt': () => new SeaMeltPlugin(),
   'glass-water': () => new GlassWaterPlugin(),
 };
