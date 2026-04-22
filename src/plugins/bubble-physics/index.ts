@@ -37,11 +37,15 @@ const ADHESION_STRENGTH = 210;      // < BUOYANCY so only the bottom pole holds
 const REPULSE_DEPTH = 6;            // px scale of the interior wall
 const REPULSE_STRENGTH = 2000;      // stiff wall to keep bubbles outside the circle
 
-// Bubble-bubble cohesion / separation
+// Bubble-bubble cohesion / contact
 const COHESION_RADIUS = 16;
 const COHESION_STRENGTH = 32;
-const COHESION_DAMP = 0.85;         // relative-velocity damping on contact
-const SEPARATION_STRENGTH = 95;     // gentle contact spring — no hard bounce
+// Contact is inelastic: kinetic energy is absorbed by deformation rather than
+// stored in a spring and returned as a bounce. We resolve overlap by direct
+// position correction (no spring) and kill the approaching normal velocity.
+const COLLISION_RESTITUTION = 0.0;  // 0 ⇒ no bounce; all collision energy absorbed
+const TANGENT_DAMPING = 0.4;        // viscous shear at the contact film
+const POSITION_CORRECTION = 0.8;    // fraction of overlap resolved per step (≤1)
 
 // ── Bubble data ─────────────────────────────────────────────────────
 
@@ -292,14 +296,28 @@ export class BubblePhysicsPlugin implements Plugin {
         const ny = dy / d;
 
         if (d < rSum) {
-          // Overlap — hard separation plus relative-velocity damping
-          const s = SEPARATION_STRENGTH * (rSum - d);
-          fx[i] -= nx * s; fy[i] -= ny * s;
-          fx[j] += nx * s; fy[j] += ny * s;
+          // Inelastic contact: resolve overlap in position (no spring to store
+          // elastic energy) and absorb the approaching component of relative
+          // velocity — the "squish" takes the momentum.
+          const corr = (rSum - d) * POSITION_CORRECTION * 0.5;
+          a.x -= nx * corr; a.y -= ny * corr;
+          b.x += nx * corr; b.y += ny * corr;
+
           const rvx = b.vx - a.vx;
           const rvy = b.vy - a.vy;
-          a.vx += rvx * COHESION_DAMP * dt; a.vy += rvy * COHESION_DAMP * dt;
-          b.vx -= rvx * COHESION_DAMP * dt; b.vy -= rvy * COHESION_DAMP * dt;
+          const vn = rvx * nx + rvy * ny;
+          if (vn < 0) {
+            // Approaching each other: damp normal velocity (restitution ≈ 0)
+            const jn = vn * (1 + COLLISION_RESTITUTION) * 0.5;
+            a.vx += nx * jn; a.vy += ny * jn;
+            b.vx -= nx * jn; b.vy -= ny * jn;
+          }
+          // Tangential (shear) damping — simulates viscous film at the contact
+          const tvx = rvx - nx * vn;
+          const tvy = rvy - ny * vn;
+          const jt = TANGENT_DAMPING * 0.5;
+          a.vx += tvx * jt; a.vy += tvy * jt;
+          b.vx -= tvx * jt; b.vy -= tvy * jt;
         } else {
           // Soft cohesion in the near band
           const c = COHESION_STRENGTH * (1 - (d - rSum) / COHESION_RADIUS);
