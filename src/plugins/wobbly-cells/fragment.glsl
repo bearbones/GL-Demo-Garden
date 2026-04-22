@@ -27,7 +27,8 @@ void main() {
   vec2 cellId = floor(uv);
   float minDist = 1e9;
   float secondDist = 1e9;
-  vec3 cellColor = vec3(0.0);
+  vec3 cellSeed = vec3(0.0);
+  vec2 closestCellWorld = vec2(0.0);
 
   for (int y = -1; y <= 1; y++) {
     for (int x = -1; x <= 1; x++) {
@@ -48,7 +49,8 @@ void main() {
       if (d < minDist) {
         secondDist = minDist;
         minDist = d;
-        cellColor = vec3(rnd, fract(rnd.x + rnd.y));
+        cellSeed = vec3(rnd, fract(rnd.x + rnd.y));
+        closestCellWorld = cellWorld;
       } else if (d < secondDist) {
         secondDist = d;
       }
@@ -61,14 +63,30 @@ void main() {
   float borderW = 0.04;
   float edge = smoothstep(borderW - aa, borderW + aa, diff);
 
-  // Color palette
-  vec3 baseColor = 0.5 + 0.5 * cos(6.2831 * (cellColor + vec3(0.0, 0.33, 0.67)) + u_time * 0.3);
-  vec3 edgeColor = vec3(0.02, 0.02, 0.05);
+  // Neon/pastel palette: high lightness floor so colors never go dark.
+  // cos(...) produces [-1, 1]; we remap to [0.55, 1.0] for a bright base.
+  vec3 hueA = 0.775 + 0.225 * cos(6.2831 * (cellSeed + vec3(0.0, 0.33, 0.67)) + u_time * 0.3);
+  // Second color: hue-shifted partner for an intra-cell gradient.
+  vec3 hueB = 0.775 + 0.225 * cos(6.2831 * (cellSeed + vec3(0.15, 0.48, 0.82)) + u_time * 0.3 + 1.9);
 
-  vec3 color = mix(edgeColor, baseColor * 0.85, edge);
+  // Per-cell gradient direction, slowly rotating.
+  float ang = 6.2831 * cellSeed.z + u_time * 0.25;
+  vec2 gradDir = vec2(cos(ang), sin(ang));
 
-  // Subtle inner glow
-  color += 0.08 * exp(-minDist * 4.0) * baseColor;
+  // Project local offset onto the gradient direction, normalise to ~[0, 1].
+  vec2 local = uv - closestCellWorld;
+  float t = clamp(dot(local, gradDir) * 1.2 + 0.5, 0.0, 1.0);
+  t = smoothstep(0.0, 1.0, t);
+
+  vec3 baseColor = mix(hueA, hueB, t);
+
+  // Soft pastel edge rather than near-black, keeps overall image light.
+  vec3 edgeColor = vec3(0.92, 0.94, 0.98);
+
+  vec3 color = mix(edgeColor, baseColor, edge);
+
+  // Subtle inner glow, tinted by the gradient.
+  color += 0.1 * exp(-minDist * 4.0) * baseColor;
 
   fragColor = vec4(color, 1.0);
 }
