@@ -103,7 +103,7 @@ Vertices 0/1/2 produce UVs (0,0), (2,0), (0,2) — a single triangle that over-c
 
 ### Pattern B — Ping-Pong Compute
 
-Used by: **Turing Patterns**, **Ripple Drop**, **Boat Wake**, **Laser Bird** (for blur).
+Used by: **Turing Patterns**, **Ripple Drop**, **Boat Wake**, **Swallowtail Butterfly** (for blur).
 
 `src/plugin/PingPongFBO.ts` maintains two `RGBA16F` framebuffers (half-float, requiring `EXT_color_buffer_float`). Each frame:
 
@@ -260,11 +260,11 @@ The display shader reads the heightfield, computes a local gradient (using finit
 
 Impulses (clicks and drags) write a Gaussian bump of height into the current FBO before the simulation step.
 
-### Laser Bird
+### Swallowtail Butterfly
 
 Three render passes:
 
-1. **Scene pass** → FBO A: renders the bird silhouette and laser beam using SDFs and anime-style utilities.
+1. **Scene pass** → FBO A: renders the butterfly silhouette (symmetric forewings, hindwings with trailing tails, thin body, antennae) using SDFs and anime-style utilities.
 2. **Blur pass** → FBO B: separable Gaussian blur on FBO A (horizontal then vertical, or a single-pass approximation) to create the soft glow halo.
 3. **Composite pass** → screen: adds the blurred glow (`gl.blendFunc(ONE, ONE)` or shader-side additive mix) over the sharp scene layer. The fringe colour shifts toward warm pink/orange to mimic 80s multi-exposure colour temperature shift.
 

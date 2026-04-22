@@ -4,7 +4,7 @@ import { createProgram } from '../../engine/gl-utils';
 import { PingPongFBO } from '../../plugin/PingPongFBO';
 import { ParamSlider } from '../../engine/ParamSlider';
 import quadVert from '../../shaders/fullscreen-quad.vert';
-import birdFrag from './bird.glsl';
+import butterflyFrag from './butterfly.glsl';
 import blurFrag from './blur.glsl';
 import compositeFrag from './composite.glsl';
 
@@ -12,10 +12,10 @@ import compositeFrag from './composite.glsl';
 const BLOOM_SCALE = 0.5; // bloom FBO at half res
 const BLUR_PASSES = 3;   // number of H+V blur passes
 
-export class LaserBirdPlugin implements Plugin {
-  readonly name = 'Laser Bird';
+export class SwallowtailButterflyPlugin implements Plugin {
+  readonly name = 'Swallowtail Butterfly';
 
-  private birdProgram!: WebGLProgram;
+  private butterflyProgram!: WebGLProgram;
   private blurProgram!: WebGLProgram;
   private compositeProgram!: WebGLProgram;
   private vao!: WebGLVertexArrayObject;
@@ -25,7 +25,7 @@ export class LaserBirdPlugin implements Plugin {
   private bloomFBO!: PingPongFBO;
 
   // Uniforms
-  private birdU!: Record<string, WebGLUniformLocation | null>;
+  private butterflyU!: Record<string, WebGLUniformLocation | null>;
   private blurU!: Record<string, WebGLUniformLocation | null>;
   private compU!: Record<string, WebGLUniformLocation | null>;
 
@@ -36,13 +36,13 @@ export class LaserBirdPlugin implements Plugin {
   private wingSpread = 0.5;
 
   // Interaction
-  private birdPos: [number, number] = [0.5, 0.5];
+  private butterflyPos: [number, number] = [0.5, 0.5];
   private sliders!: ParamSlider;
 
   init(ctx: EngineContext) {
     const { gl } = ctx;
 
-    this.birdProgram = createProgram(gl, quadVert, birdFrag);
+    this.butterflyProgram = createProgram(gl, quadVert, butterflyFrag);
     this.blurProgram = createProgram(gl, quadVert, blurFrag);
     this.compositeProgram = createProgram(gl, quadVert, compositeFrag);
     this.vao = gl.createVertexArray()!;
@@ -56,8 +56,8 @@ export class LaserBirdPlugin implements Plugin {
     this.bloomFBO = new PingPongFBO(gl, bw, bh);
 
     // Cache uniforms
-    this.birdU = this.getUniforms(gl, this.birdProgram, [
-      'u_resolution', 'u_time', 'u_birdPos', 'u_wingSpread',
+    this.butterflyU = this.getUniforms(gl, this.butterflyProgram, [
+      'u_resolution', 'u_time', 'u_butterflyPos', 'u_wingSpread',
     ]);
     this.blurU = this.getUniforms(gl, this.blurProgram, [
       'u_source', 'u_direction', 'u_glowRadius',
@@ -105,17 +105,17 @@ export class LaserBirdPlugin implements Plugin {
     const { gl } = ctx;
     gl.bindVertexArray(this.vao);
 
-    // ── Pass 1: Render bird to scene FBO ──
+    // ── Pass 1: Render butterfly to scene FBO ──
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO.fbo);
     gl.viewport(0, 0, this.sceneFBO.w, this.sceneFBO.h);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.useProgram(this.birdProgram);
-    gl.uniform2f(this.birdU.u_resolution, this.sceneFBO.w, this.sceneFBO.h);
-    gl.uniform1f(this.birdU.u_time, ctx.time);
-    gl.uniform2f(this.birdU.u_birdPos, this.birdPos[0], this.birdPos[1]);
-    gl.uniform1f(this.birdU.u_wingSpread, this.wingSpread);
+    gl.useProgram(this.butterflyProgram);
+    gl.uniform2f(this.butterflyU.u_resolution, this.sceneFBO.w, this.sceneFBO.h);
+    gl.uniform1f(this.butterflyU.u_time, ctx.time);
+    gl.uniform2f(this.butterflyU.u_butterflyPos, this.butterflyPos[0], this.butterflyPos[1]);
+    gl.uniform1f(this.butterflyU.u_wingSpread, this.wingSpread);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // ── Pass 2: Bloom — downsample scene to bloom FBO, then blur ──
@@ -177,16 +177,15 @@ export class LaserBirdPlugin implements Plugin {
 
   onGesture(_ctx: EngineContext, event: GestureEvent) {
     if (event.type === 'drag-move' || event.type === 'drag-start') {
-      this.birdPos = [event.pos.x, 1.0 - event.pos.y];
+      this.butterflyPos = [event.pos.x, 1.0 - event.pos.y];
     } else if (event.type === 'tap') {
-      // Pulse effect handled by time-based oscillation already
-      this.birdPos = [event.pos.x, 1.0 - event.pos.y];
+      this.butterflyPos = [event.pos.x, 1.0 - event.pos.y];
     }
   }
 
   destroy(ctx: EngineContext) {
     const { gl } = ctx;
-    gl.deleteProgram(this.birdProgram);
+    gl.deleteProgram(this.butterflyProgram);
     gl.deleteProgram(this.blurProgram);
     gl.deleteProgram(this.compositeProgram);
     gl.deleteVertexArray(this.vao);
