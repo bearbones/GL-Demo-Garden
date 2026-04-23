@@ -7,6 +7,7 @@ import { RippleDropPlugin } from './plugins/ripple-drop';
 import { SwallowtailButterflyPlugin } from './plugins/swallowtail-butterfly';
 import { SeaMeltPlugin } from './plugins/sea-melt';
 import { GlassWaterPlugin } from './plugins/glass-water';
+import { AuroraBorealisPlugin } from './plugins/aurora-borealis';
 
 const PLUGINS: Record<string, () => Plugin> = {
   'wobbly-cells': () => new WobbyCellsPlugin(),
@@ -16,6 +17,7 @@ const PLUGINS: Record<string, () => Plugin> = {
   'swallowtail-butterfly': () => new SwallowtailButterflyPlugin(),
   'sea-melt': () => new SeaMeltPlugin(),
   'glass-water': () => new GlassWaterPlugin(),
+  'aurora-borealis': () => new AuroraBorealisPlugin(),
 };
 
 const engine = new Engine();
