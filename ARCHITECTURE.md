@@ -72,7 +72,7 @@ Two patterns cover all current demos.
 
 ### Pattern A — Single-Pass Fragment Shader
 
-Used by: **Wobbly Cells**, and as the display pass in multi-pass demos.
+Used by: **Wobbly Cells**, **Sea Melt**, **Glass Water**, **Ripple Drop**, and as the display pass in multi-pass demos.
 
 Base class: `src/plugin/FragmentShaderPlugin.ts`
 
@@ -103,7 +103,7 @@ Vertices 0/1/2 produce UVs (0,0), (2,0), (0,2) — a single triangle that over-c
 
 ### Pattern B — Ping-Pong Compute
 
-Used by: **Turing Patterns**, **Ripple Drop**, **Boat Wake**, **Swallowtail Butterfly** (for blur).
+Used by: **Turing Patterns**, **Swallowtail Butterfly** (for blur).
 
 `src/plugin/PingPongFBO.ts` maintains two `RGBA16F` framebuffers (half-float, requiring `EXT_color_buffer_float`). Each frame:
 
@@ -122,7 +122,7 @@ This avoids reading and writing the same texture in the same draw call (which is
 
 #### Multi-Step Compute
 
-Some simulations are numerically stiff — they need many small steps per visual frame to stay stable. Turing Patterns runs **12 Gray-Scott steps per frame**; Ripple Drop runs 1 step per frame but at half resolution. The inner loop just calls `bindRead → draw → swap` repeatedly:
+Some simulations are numerically stiff — they need many small steps per visual frame to stay stable. Turing Patterns runs **12 Gray-Scott steps per frame**. The inner loop just calls `bindRead → draw → swap` repeatedly:
 
 ```ts
 for (let i = 0; i < stepsPerFrame; i++) {
@@ -209,7 +209,7 @@ Higher-level utilities that combine SDF geometry with noise to produce hand-draw
 | `expGlow(d, intensity, falloff)` | Exponential glow: `intensity · exp(-|d|·falloff)`. Tighter core, used for laser / magic effects. |
 | `posterize(color, levels)` | Quantizes each channel to `levels` discrete steps, simulating the limited palette of hand-painted gouache cels. |
 
-`inkStroke` is the key function for the water ripple and boat wake displays: it takes a heightfield value as a pseudo-SDF distance and produces a stroke that reads as hand-drawn rather than computer-generated.
+`inkStroke` takes a heightfield or SDF value as a pseudo-distance and produces a stroke that reads as hand-drawn rather than computer-generated; `posterize` gives the single-pass water demos their flattened gouache steps.
 
 ---
 
@@ -238,27 +238,26 @@ The Laplacian `∇²` is approximated on the pixel grid with a 3×3 stencil weig
 
 The display shader maps the B concentration to a colour gradient. Clicking seeds a patch of high-B concentration, which then interacts with the existing pattern.
 
-### Ripple Drop (2D Wave Equation)
+### Ripple Drop (Hand-Inked Rain)
 
-The wave equation on a 2D heightfield:
+Modeled on the pond scenes in *Windaria* (1986). The key realization is that the animated ripple look is **not a wave simulation**: each ripple in the reference cels is a discrete hand-inked ellipse (or spiral) drawn *on* a flat painted pond, expanding and fading on its own — no interference, no reflections. An earlier version of this demo used a 2D wave-equation heightfield, which produced physically-correct interference soup instead of clean rings; it was replaced entirely.
 
-```
-∂²h/∂t² = c²·∇²h
-```
+The current implementation keeps a small CPU list of ripple entities — `(x, y, birthTime, kind + seed)` packed into a `vec4` — uploaded as a uniform array (`MAX_RIPPLES = 48`) and evaluated analytically in a single fragment pass. No ping-pong FBO, no resize state to preserve.
 
-Discretised as a three-level explicit scheme (current, previous, and one step back). Each pixel stores `(height_current, height_previous)` in the `.rg` channels of the ping-pong texture. The update rule per pixel:
+Three ripple kinds:
 
-```glsl
-float laplacian = (n + s + e + w) - 4.0 * h_curr;
-float h_next = 2.0 * h_curr - h_prev + waveSpeed * waveSpeed * laplacian;
-h_next *= damping;   // energy dissipation
-```
+- **Rain drop** (`kind 0`): two small concentric rings. Spawned ambiently at a framerate-independent rate set by the Rain slider, and dotted along drag paths.
+- **Tap** (`kind 1`): three larger staggered rings plus a brief impact dot at birth.
+- **Spiral** (`kind 2`): one continuous three-turn spiral stroke — the classic anime shorthand for dense concentric ripples. Taps have a 30% chance to spawn one.
 
-`waveSpeed` is the Courant number (must stay below 0.5 for numerical stability). `damping` is applied multiplicatively each step; `0.995` gives a slow decay that keeps ripples alive for several seconds.
+Every ring is drawn with the ingredients that make it read as inked rather than computed:
 
-The display shader reads the heightfield, computes a local gradient (using finite differences on the texture), and passes that gradient as a pseudo-SDF into `inkStroke()` — making wave peaks render as brush strokes rather than smooth isolines.
+- **Foreshortening**: positions are evaluated in a vertically squashed space (Perspective slider), with ripples higher in the frame rendered smaller and flatter for depth.
+- **Ease-out expansion**: radius follows `1 − (1−u)²`, fast at birth and decelerating, with rings in a set staggered in time.
+- **Hand wobble**: the radius and stroke width are modulated by simplex noise sampled *on the ring's unit circle* (`snoise(dir * k + seed)`), which varies around the ring without a seam at ±π.
+- **Ink gaps**: an angular sine-plus-noise mask leaves 2–3 deliberate breaks per ring, so ellipses are incomplete the way a fast brush pass is.
 
-Impulses (clicks and drags) write a Gaussian bump of height into the current FBO before the simulation step.
+The pond itself is flat gouache: a tonal gradient with soft `fbm` blotches, a sky-reflection patch, and a gentle edge vignette. When the Rain slider is up, thin falling streak dashes are composited at low alpha.
 
 ### Swallowtail Butterfly
 

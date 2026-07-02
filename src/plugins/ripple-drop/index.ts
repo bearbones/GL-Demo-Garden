@@ -1,163 +1,156 @@
-import { Plugin } from '../../plugin/Plugin';
+import { FragmentShaderPlugin } from '../../plugin/FragmentShaderPlugin';
 import { EngineContext, GestureEvent } from '../../engine/types';
-import { createProgram } from '../../engine/gl-utils';
-import { PingPongFBO } from '../../plugin/PingPongFBO';
 import { ParamSlider } from '../../engine/ParamSlider';
-import quadVert from '../../shaders/fullscreen-quad.vert';
-import simulateFrag from './simulate.glsl';
-import displayFrag from './display.glsl';
+import fragmentSrc from './display.glsl';
 
-// ── Constants ───────────────────────────────────────────────────────
-const SIM_SCALE = 0.5; // simulation runs at half resolution
+// ── Ripple entities ─────────────────────────────────────────────────
+// The Windaria look is not a wave simulation: each ripple is a discrete
+// hand-inked ellipse (or spiral) drawn on a flat painted pond. We keep a
+// small list of ripples on the CPU and evaluate them analytically in a
+// single fragment pass — no ping-pong FBO, no heightfield.
 
-export class RippleDropPlugin implements Plugin {
+const MAX_RIPPLES = 48; // must match display.glsl
+
+const KIND_SMALL = 0;  // rain drop: 2 small rings
+const KIND_TAP = 1;    // tap: 3 larger rings
+const KIND_SPIRAL = 2; // anime spiral shorthand for dense concentric rings
+
+const SPIRAL_TAP_CHANCE = 0.3;
+const RAIN_MAX_DROPS_PER_SEC = 10;
+const DRAG_SPAWN_SPACING = 0.07; // UV distance between drops along a drag
+
+interface Ripple {
+  x: number;      // UV, origin bottom-left
+  y: number;
+  birth: number;  // engine time (seconds)
+  w: number;      // kind + fractional seed, decoded in the shader
+}
+
+export class RippleDropPlugin extends FragmentShaderPlugin {
   readonly name = 'Ripple Drop';
 
-  private simProgram!: WebGLProgram;
-  private displayProgram!: WebGLProgram;
-  private vao!: WebGLVertexArrayObject;
-  private fbo!: PingPongFBO;
   private sliders!: ParamSlider;
-
-  // Uniforms
-  private simUniforms!: Record<string, WebGLUniformLocation | null>;
-  private dispUniforms!: Record<string, WebGLUniformLocation | null>;
+  private ripples: Ripple[] = [];
+  private rippleData = new Float32Array(MAX_RIPPLES * 4);
+  private locs: Record<string, WebGLUniformLocation | null> | null = null;
 
   // Parameters (live-adjustable)
-  private strokeWidth = 1.0;
-  private breakFreq = 6.0;
-  private damping = 0.995;
-  private waveSpeed = 0.45;
+  private rain = 0.45;
+  private squash = 0.35;
+  private life = 4.5;
+  private strokeWidth = 2.6;
 
-  // Interaction state
-  private pendingImpulse: [number, number] | null = null;
-  private dragging = false;
-  private dragPos: [number, number] = [0, 0];
+  // Spawn state
+  private rainAccum = 0;
+  private lastDragSpawn: [number, number] | null = null;
 
-  init(ctx: EngineContext) {
-    const { gl } = ctx;
-
-    this.simProgram = createProgram(gl, quadVert, simulateFrag);
-    this.displayProgram = createProgram(gl, quadVert, displayFrag);
-    this.vao = gl.createVertexArray()!;
-
-    const simW = Math.floor(ctx.width * SIM_SCALE);
-    const simH = Math.floor(ctx.height * SIM_SCALE);
-    this.fbo = new PingPongFBO(gl, simW, simH);
-
-    // Cache uniform locations
-    this.simUniforms = this.getUniforms(gl, this.simProgram, [
-      'u_prevState', 'u_resolution', 'u_damping', 'u_waveSpeed',
-      'u_impulsePos', 'u_impulseStrength',
-    ]);
-    this.dispUniforms = this.getUniforms(gl, this.displayProgram, [
-      'u_heightfield', 'u_resolution', 'u_time', 'u_strokeWidth', 'u_breakFreq',
-    ]);
-
-    // Slider UI
-    this.sliders = new ParamSlider();
-    this.sliders.addSlider({
-      label: 'Stroke Width', min: 0.2, max: 3.0, value: this.strokeWidth,
-      onChange: (v) => { this.strokeWidth = v; },
-    });
-    this.sliders.addSlider({
-      label: 'Break Freq', min: 1.0, max: 15.0, value: this.breakFreq,
-      onChange: (v) => { this.breakFreq = v; },
-    });
-    this.sliders.addSlider({
-      label: 'Damping', min: 0.98, max: 1.0, value: this.damping, step: 0.001,
-      onChange: (v) => { this.damping = v; },
-    });
-    this.sliders.addSlider({
-      label: 'Wave Speed', min: 0.1, max: 0.8, value: this.waveSpeed,
-      onChange: (v) => { this.waveSpeed = v; },
-    });
+  protected fragmentSource() {
+    return fragmentSrc;
   }
 
-  resize(ctx: EngineContext) {
-    const { gl } = ctx;
-    const simW = Math.floor(ctx.width * SIM_SCALE);
-    const simH = Math.floor(ctx.height * SIM_SCALE);
-    this.fbo.resize(gl, simW, simH);
+  init(ctx: EngineContext) {
+    super.init(ctx);
+    this.ripples = [];
+    this.rainAccum = 0;
+    this.locs = null;
+
+    this.sliders = new ParamSlider();
+    this.sliders.addSlider({
+      label: 'Rain', min: 0.0, max: 1.0, value: this.rain, step: 0.05,
+      onChange: (v) => { this.rain = v; },
+    });
+    this.sliders.addSlider({
+      label: 'Perspective', min: 0.15, max: 1.0, value: this.squash, step: 0.01,
+      onChange: (v) => { this.squash = v; },
+    });
+    this.sliders.addSlider({
+      label: 'Lifetime', min: 2.0, max: 8.0, value: this.life, step: 0.1,
+      onChange: (v) => { this.life = v; },
+    });
+    this.sliders.addSlider({
+      label: 'Stroke Width', min: 1.0, max: 4.0, value: this.strokeWidth, step: 0.1,
+      onChange: (v) => { this.strokeWidth = v; },
+    });
   }
 
   render(ctx: EngineContext) {
-    const { gl } = ctx;
-
-    // ── Simulation pass ──
-    gl.useProgram(this.simProgram);
-    this.fbo.bindRead(gl, 0);
-    gl.uniform1i(this.simUniforms.u_prevState, 0);
-    gl.uniform2f(this.simUniforms.u_resolution, this.fbo.width, this.fbo.height);
-    gl.uniform1f(this.simUniforms.u_damping, this.damping);
-    gl.uniform1f(this.simUniforms.u_waveSpeed, this.waveSpeed);
-
-    // Handle impulse from click/tap
-    if (this.pendingImpulse) {
-      gl.uniform2f(this.simUniforms.u_impulsePos, this.pendingImpulse[0], this.pendingImpulse[1]);
-      gl.uniform1f(this.simUniforms.u_impulseStrength, 0.5);
-      this.pendingImpulse = null;
-    } else if (this.dragging) {
-      gl.uniform2f(this.simUniforms.u_impulsePos, this.dragPos[0], this.dragPos[1]);
-      gl.uniform1f(this.simUniforms.u_impulseStrength, 0.15);
-    } else {
-      gl.uniform2f(this.simUniforms.u_impulsePos, -1.0, -1.0);
-      gl.uniform1f(this.simUniforms.u_impulseStrength, 0.0);
+    // Ambient rain: Poisson-ish spawning, framerate-independent
+    this.rainAccum += this.rain * RAIN_MAX_DROPS_PER_SEC * ctx.dt;
+    while (this.rainAccum >= 1) {
+      this.rainAccum -= 1;
+      this.spawn(0.03 + Math.random() * 0.94, 0.08 + Math.random() * 0.87, KIND_SMALL, ctx.time);
     }
 
-    this.fbo.bindWrite(gl);
-    gl.bindVertexArray(this.vao);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    this.fbo.swap();
+    // Prune expired ripples
+    if (this.ripples.length > 0 && ctx.time - this.ripples[0].birth > this.life) {
+      this.ripples = this.ripples.filter((r) => ctx.time - r.birth <= this.life);
+    }
 
-    // ── Display pass ──
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, ctx.width, ctx.height);
-    gl.useProgram(this.displayProgram);
-
-    this.fbo.bindRead(gl, 0);
-    gl.uniform1i(this.dispUniforms.u_heightfield, 0);
-    gl.uniform2f(this.dispUniforms.u_resolution, ctx.width, ctx.height);
-    gl.uniform1f(this.dispUniforms.u_time, ctx.time);
-    gl.uniform1f(this.dispUniforms.u_strokeWidth, this.strokeWidth);
-    gl.uniform1f(this.dispUniforms.u_breakFreq, this.breakFreq);
-
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    super.render(ctx);
   }
 
-  onGesture(_ctx: EngineContext, event: GestureEvent) {
-    const uv: [number, number] = [event.pos.x, 1.0 - event.pos.y];
-    if (event.type === 'tap') {
-      this.pendingImpulse = uv;
-    } else if (event.type === 'drag-start') {
-      this.dragging = true;
-      this.dragPos = uv;
-      this.pendingImpulse = uv;
-    } else if (event.type === 'drag-move') {
-      this.dragPos = uv;
-    } else if (event.type === 'drag-end') {
-      this.dragging = false;
+  protected setUniforms(gl: WebGL2RenderingContext, program: WebGLProgram, _ctx: EngineContext) {
+    if (!this.locs) {
+      this.locs = {
+        u_ripples: gl.getUniformLocation(program, 'u_ripples[0]'),
+        u_count: gl.getUniformLocation(program, 'u_count'),
+        u_squash: gl.getUniformLocation(program, 'u_squash'),
+        u_life: gl.getUniformLocation(program, 'u_life'),
+        u_strokeWidth: gl.getUniformLocation(program, 'u_strokeWidth'),
+        u_rain: gl.getUniformLocation(program, 'u_rain'),
+      };
     }
+
+    const n = this.ripples.length;
+    for (let i = 0; i < n; i++) {
+      const r = this.ripples[i];
+      const j = i * 4;
+      this.rippleData[j] = r.x;
+      this.rippleData[j + 1] = r.y;
+      this.rippleData[j + 2] = r.birth;
+      this.rippleData[j + 3] = r.w;
+    }
+
+    gl.uniform4fv(this.locs.u_ripples, this.rippleData);
+    gl.uniform1i(this.locs.u_count, n);
+    gl.uniform1f(this.locs.u_squash, this.squash);
+    gl.uniform1f(this.locs.u_life, this.life);
+    gl.uniform1f(this.locs.u_strokeWidth, this.strokeWidth);
+    gl.uniform1f(this.locs.u_rain, this.rain);
+  }
+
+  onGesture(ctx: EngineContext, event: GestureEvent) {
+    const x = event.pos.x;
+    const y = 1.0 - event.pos.y; // shader UV origin is bottom-left
+
+    if (event.type === 'tap') {
+      const kind = Math.random() < SPIRAL_TAP_CHANCE ? KIND_SPIRAL : KIND_TAP;
+      this.spawn(x, y, kind, ctx.time);
+    } else if (event.type === 'drag-start') {
+      this.spawn(x, y, KIND_TAP, ctx.time);
+      this.lastDragSpawn = [x, y];
+    } else if (event.type === 'drag-move' && this.lastDragSpawn) {
+      const dx = x - this.lastDragSpawn[0];
+      const dy = y - this.lastDragSpawn[1];
+      if (Math.hypot(dx, dy) > DRAG_SPAWN_SPACING) {
+        this.spawn(x, y, KIND_SMALL, ctx.time);
+        this.lastDragSpawn = [x, y];
+      }
+    } else if (event.type === 'drag-end') {
+      this.lastDragSpawn = null;
+    }
+  }
+
+  private spawn(x: number, y: number, kind: number, time: number) {
+    if (this.ripples.length >= MAX_RIPPLES) this.ripples.shift();
+    // Seed lives in the fractional part; keep it away from 0/1 so
+    // floor()/fract() in the shader decode the kind reliably.
+    this.ripples.push({ x, y, birth: time, w: kind + 0.05 + Math.random() * 0.9 });
   }
 
   destroy(ctx: EngineContext) {
-    const { gl } = ctx;
-    gl.deleteProgram(this.simProgram);
-    gl.deleteProgram(this.displayProgram);
-    gl.deleteVertexArray(this.vao);
-    this.fbo.destroy(gl);
+    super.destroy(ctx);
     this.sliders.destroy();
-  }
-
-  private getUniforms(
-    gl: WebGL2RenderingContext,
-    program: WebGLProgram,
-    names: string[],
-  ): Record<string, WebGLUniformLocation | null> {
-    const out: Record<string, WebGLUniformLocation | null> = {};
-    for (const name of names) {
-      out[name] = gl.getUniformLocation(program, name);
-    }
-    return out;
+    this.ripples = [];
   }
 }
