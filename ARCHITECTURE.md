@@ -256,6 +256,8 @@ Every ring is drawn with the ingredients that make it read as inked rather than 
 - **Ease-out expansion**: radius follows `1 − (1−u)²`, fast at birth and decelerating, with rings in a set staggered in time.
 - **Hand wobble**: the radius and stroke width are modulated by simplex noise sampled *on the ring's unit circle* (`snoise(dir * k + seed)`), which varies around the ring without a seam at ±π.
 - **Ink gaps**: an angular sine-plus-noise mask leaves 2–3 deliberate breaks per ring, so ellipses are incomplete the way a fast brush pass is.
+- **Line boil**: each ripple advances on a quantized redraw clock (Boil Rate slider, default 8 Hz, phase-offset per ripple). Every tick re-seeds the wobble, stroke-width, and gap noise — the line is "redrawn" like cels animated on threes, rather than one frozen shape dilating outward.
+- **Aging**: wobble amplitude and frequency grow with ring age while stroke width thins and gaps widen, so young rings are clean ellipses and old rings squiggle apart before fading. A slight seed-directed drift pulls rings off-center as they expand, like a pond current.
 
 The pond itself is flat gouache: a tonal gradient with soft `fbm` blotches, a sky-reflection patch, and a gentle edge vignette. When the Rain slider is up, thin falling streak dashes are composited at low alpha.
 

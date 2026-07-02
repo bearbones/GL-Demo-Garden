@@ -39,6 +39,7 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
   private squash = 0.35;
   private life = 4.5;
   private strokeWidth = 2.6;
+  private boilRate = 8; // cel redraws per second (line boil)
 
   // Spawn state
   private rainAccum = 0;
@@ -71,6 +72,10 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
       label: 'Stroke Width', min: 1.0, max: 4.0, value: this.strokeWidth, step: 0.1,
       onChange: (v) => { this.strokeWidth = v; },
     });
+    this.sliders.addSlider({
+      label: 'Boil Rate', min: 2.0, max: 12.0, value: this.boilRate, step: 0.5,
+      onChange: (v) => { this.boilRate = v; },
+    });
   }
 
   render(ctx: EngineContext) {
@@ -98,6 +103,7 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
         u_life: gl.getUniformLocation(program, 'u_life'),
         u_strokeWidth: gl.getUniformLocation(program, 'u_strokeWidth'),
         u_rain: gl.getUniformLocation(program, 'u_rain'),
+        u_boilRate: gl.getUniformLocation(program, 'u_boilRate'),
       };
     }
 
@@ -117,6 +123,7 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
     gl.uniform1f(this.locs.u_life, this.life);
     gl.uniform1f(this.locs.u_strokeWidth, this.strokeWidth);
     gl.uniform1f(this.locs.u_rain, this.rain);
+    gl.uniform1f(this.locs.u_boilRate, this.boilRate);
   }
 
   onGesture(ctx: EngineContext, event: GestureEvent) {
