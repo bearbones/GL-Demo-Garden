@@ -10,7 +10,7 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 | **Turing Patterns** | Gray-Scott reaction-diffusion | Click/drag to seed chemical B |
 | **Bubble Physics** | Vertex-displaced bubble simulation | Passive; bubbles float and collide |
 | **Ripple Drop** | Hand-inked rain ripples (Windaria 1986 style) | Tap for rings (sometimes a spiral); drag to dot a trail; Rain slider for ambient drops |
-| **Swallowtail Butterfly** | Multi-pass bloom composite | Drag to move; animated butterfly with glow |
+| **Laser Bird** | 80s anime light-being with multi-pass bloom | Tap/drag to move; Form slider morphs bird ↔ swallowtail butterfly |
 | **Boat Wake** | Kelvin wake foam advection | Passive; foam trails behind boat |
 
 Navigate between demos using the links in the top bar, or by setting the URL hash directly:
@@ -61,7 +61,7 @@ src/
 │   ├── wobbly-cells/        # index.ts + fragment.glsl
 │   ├── turing-patterns/     # index.ts + compute.glsl + display.glsl
 │   ├── bubble-physics/      # index.ts + background.glsl + bubble.vert + bubble.frag
-│   ├── swallowtail-butterfly/  # index.ts + butterfly.glsl + blur.glsl + composite.glsl
+│   ├── laser-bird/          # index.ts + scene.glsl + blur.glsl + composite.glsl
 │   ├── ripple-drop/         # index.ts + display.glsl
 │   └── anime-shaders/       # REFERENCE.md — visual technique reference
 └── shaders/

@@ -4,18 +4,19 @@ import { createProgram } from '../../engine/gl-utils';
 import { PingPongFBO } from '../../plugin/PingPongFBO';
 import { ParamSlider } from '../../engine/ParamSlider';
 import quadVert from '../../shaders/fullscreen-quad.vert';
-import butterflyFrag from './butterfly.glsl';
+import sceneFrag from './scene.glsl';
 import blurFrag from './blur.glsl';
 import compositeFrag from './composite.glsl';
 
 // ── Constants ───────────────────────────────────────────────────────
 const BLOOM_SCALE = 0.5; // bloom FBO at half res
 const BLUR_PASSES = 3;   // number of H+V blur passes
+const BOIL_RATE = 8;     // cel redraws per second
 
-export class SwallowtailButterflyPlugin implements Plugin {
-  readonly name = 'Swallowtail Butterfly';
+export class LaserBirdPlugin implements Plugin {
+  readonly name = 'Laser Bird';
 
-  private butterflyProgram!: WebGLProgram;
+  private sceneProgram!: WebGLProgram;
   private blurProgram!: WebGLProgram;
   private compositeProgram!: WebGLProgram;
   private vao!: WebGLVertexArrayObject;
@@ -25,24 +26,24 @@ export class SwallowtailButterflyPlugin implements Plugin {
   private bloomFBO!: PingPongFBO;
 
   // Uniforms
-  private butterflyU!: Record<string, WebGLUniformLocation | null>;
+  private sceneU!: Record<string, WebGLUniformLocation | null>;
   private blurU!: Record<string, WebGLUniformLocation | null>;
   private compU!: Record<string, WebGLUniformLocation | null>;
 
   // Parameters
-  private glowIntensity = 1.5;
-  private glowRadius = 2.0;
-  private particleDensity = 0.6;
-  private wingSpread = 0.5;
+  private form = 0.0;          // 0 = bird, 1 = swallowtail butterfly
+  private glowIntensity = 1.25;
+  private glowRadius = 2.5;
+  private petalDensity = 0.6;
 
   // Interaction
-  private butterflyPos: [number, number] = [0.5, 0.5];
+  private birdPos: [number, number] = [0.5, 0.55];
   private sliders!: ParamSlider;
 
   init(ctx: EngineContext) {
     const { gl } = ctx;
 
-    this.butterflyProgram = createProgram(gl, quadVert, butterflyFrag);
+    this.sceneProgram = createProgram(gl, quadVert, sceneFrag);
     this.blurProgram = createProgram(gl, quadVert, blurFrag);
     this.compositeProgram = createProgram(gl, quadVert, compositeFrag);
     this.vao = gl.createVertexArray()!;
@@ -56,19 +57,23 @@ export class SwallowtailButterflyPlugin implements Plugin {
     this.bloomFBO = new PingPongFBO(gl, bw, bh);
 
     // Cache uniforms
-    this.butterflyU = this.getUniforms(gl, this.butterflyProgram, [
-      'u_resolution', 'u_time', 'u_butterflyPos', 'u_wingSpread',
+    this.sceneU = this.getUniforms(gl, this.sceneProgram, [
+      'u_resolution', 'u_time', 'u_birdPos', 'u_form', 'u_boilRate',
     ]);
     this.blurU = this.getUniforms(gl, this.blurProgram, [
       'u_source', 'u_direction', 'u_glowRadius',
     ]);
     this.compU = this.getUniforms(gl, this.compositeProgram, [
       'u_scene', 'u_bloom', 'u_resolution', 'u_time',
-      'u_glowIntensity', 'u_particleDensity',
+      'u_glowIntensity', 'u_petalDensity', 'u_birdPos', 'u_boilRate',
     ]);
 
     // Sliders
     this.sliders = new ParamSlider();
+    this.sliders.addSlider({
+      label: 'Form', min: 0.0, max: 1.0, value: this.form, step: 0.01,
+      onChange: (v) => { this.form = v; },
+    });
     this.sliders.addSlider({
       label: 'Glow Intensity', min: 0.3, max: 4.0, value: this.glowIntensity,
       onChange: (v) => { this.glowIntensity = v; },
@@ -78,24 +83,18 @@ export class SwallowtailButterflyPlugin implements Plugin {
       onChange: (v) => { this.glowRadius = v; },
     });
     this.sliders.addSlider({
-      label: 'Particles', min: 0.0, max: 1.0, value: this.particleDensity,
-      onChange: (v) => { this.particleDensity = v; },
-    });
-    this.sliders.addSlider({
-      label: 'Wing Spread', min: 0.0, max: 1.0, value: this.wingSpread,
-      onChange: (v) => { this.wingSpread = v; },
+      label: 'Petals', min: 0.0, max: 1.0, value: this.petalDensity,
+      onChange: (v) => { this.petalDensity = v; },
     });
   }
 
   resize(ctx: EngineContext) {
     const { gl } = ctx;
 
-    // Recreate scene FBO at new canvas size
     gl.deleteFramebuffer(this.sceneFBO.fbo);
     gl.deleteTexture(this.sceneFBO.tex);
     this.sceneFBO = this.createFBO(gl, ctx.width, ctx.height);
 
-    // Resize bloom FBO at half res
     const bw = Math.floor(ctx.width * BLOOM_SCALE);
     const bh = Math.floor(ctx.height * BLOOM_SCALE);
     this.bloomFBO.resize(gl, bw, bh);
@@ -105,21 +104,21 @@ export class SwallowtailButterflyPlugin implements Plugin {
     const { gl } = ctx;
     gl.bindVertexArray(this.vao);
 
-    // ── Pass 1: Render butterfly to scene FBO ──
+    // ── Pass 1: Render the light being to the scene FBO ──
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO.fbo);
     gl.viewport(0, 0, this.sceneFBO.w, this.sceneFBO.h);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.useProgram(this.butterflyProgram);
-    gl.uniform2f(this.butterflyU.u_resolution, this.sceneFBO.w, this.sceneFBO.h);
-    gl.uniform1f(this.butterflyU.u_time, ctx.time);
-    gl.uniform2f(this.butterflyU.u_butterflyPos, this.butterflyPos[0], this.butterflyPos[1]);
-    gl.uniform1f(this.butterflyU.u_wingSpread, this.wingSpread);
+    gl.useProgram(this.sceneProgram);
+    gl.uniform2f(this.sceneU.u_resolution, this.sceneFBO.w, this.sceneFBO.h);
+    gl.uniform1f(this.sceneU.u_time, ctx.time);
+    gl.uniform2f(this.sceneU.u_birdPos, this.birdPos[0], this.birdPos[1]);
+    gl.uniform1f(this.sceneU.u_form, this.form);
+    gl.uniform1f(this.sceneU.u_boilRate, BOIL_RATE);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // ── Pass 2: Bloom — downsample scene to bloom FBO, then blur ──
-    // First blit scene into bloom FBO as starting point
     this.bloomFBO.bindWrite(gl);
     gl.useProgram(this.blurProgram);
     gl.activeTexture(gl.TEXTURE0);
@@ -130,13 +129,11 @@ export class SwallowtailButterflyPlugin implements Plugin {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     this.bloomFBO.swap();
 
-    // Multi-pass separable blur
     const bw = this.bloomFBO.width;
     const bh = this.bloomFBO.height;
     for (let i = 0; i < BLUR_PASSES; i++) {
       const scale = this.glowRadius * (1.0 + i * 0.5);
 
-      // Horizontal
       this.bloomFBO.bindRead(gl, 0);
       gl.uniform1i(this.blurU.u_source, 0);
       gl.uniform2f(this.blurU.u_direction, scale / bw, 0.0);
@@ -145,7 +142,6 @@ export class SwallowtailButterflyPlugin implements Plugin {
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       this.bloomFBO.swap();
 
-      // Vertical
       this.bloomFBO.bindRead(gl, 0);
       gl.uniform1i(this.blurU.u_source, 0);
       gl.uniform2f(this.blurU.u_direction, 0.0, scale / bh);
@@ -170,22 +166,22 @@ export class SwallowtailButterflyPlugin implements Plugin {
     gl.uniform2f(this.compU.u_resolution, ctx.width, ctx.height);
     gl.uniform1f(this.compU.u_time, ctx.time);
     gl.uniform1f(this.compU.u_glowIntensity, this.glowIntensity);
-    gl.uniform1f(this.compU.u_particleDensity, this.particleDensity);
+    gl.uniform1f(this.compU.u_petalDensity, this.petalDensity);
+    gl.uniform2f(this.compU.u_birdPos, this.birdPos[0], this.birdPos[1]);
+    gl.uniform1f(this.compU.u_boilRate, BOIL_RATE);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
   onGesture(_ctx: EngineContext, event: GestureEvent) {
-    if (event.type === 'drag-move' || event.type === 'drag-start') {
-      this.butterflyPos = [event.pos.x, 1.0 - event.pos.y];
-    } else if (event.type === 'tap') {
-      this.butterflyPos = [event.pos.x, 1.0 - event.pos.y];
+    if (event.type === 'tap' || event.type === 'drag-start' || event.type === 'drag-move') {
+      this.birdPos = [event.pos.x, 1.0 - event.pos.y];
     }
   }
 
   destroy(ctx: EngineContext) {
     const { gl } = ctx;
-    gl.deleteProgram(this.butterflyProgram);
+    gl.deleteProgram(this.sceneProgram);
     gl.deleteProgram(this.blurProgram);
     gl.deleteProgram(this.compositeProgram);
     gl.deleteVertexArray(this.vao);
