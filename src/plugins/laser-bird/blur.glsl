@@ -8,11 +8,15 @@ uniform sampler2D u_source;
 uniform vec2 u_direction;   // (1/w, 0) for horizontal, (0, 1/h) for vertical
 uniform float u_glowRadius;
 
-// 15-tap Gaussian kernel (sigma ~4.5)
+// 15-tap Gaussian kernel (sigma ~4.5). The raw weights sum to ~0.803
+// (center + 2× each side tap), so NORM rescales the kernel to unity —
+// without it each blur pass dims the bloom ~20% and the multi-pass
+// chain loses ~80% of the glow energy.
 const float weights[8] = float[8](
   0.1353352832, 0.1238315369, 0.0948770038, 0.0607710517,
   0.0325514671, 0.0145896860, 0.0054679687, 0.0017118080
 );
+const float NORM = 1.0 / 0.8029363276;
 
 void main() {
   vec3 result = texture(u_source, v_uv).rgb * weights[0];
@@ -23,5 +27,5 @@ void main() {
     result += texture(u_source, v_uv - offset).rgb * weights[i];
   }
 
-  fragColor = vec4(result, 1.0);
+  fragColor = vec4(result * NORM, 1.0);
 }

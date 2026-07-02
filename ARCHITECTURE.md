@@ -103,7 +103,7 @@ Vertices 0/1/2 produce UVs (0,0), (2,0), (0,2) — a single triangle that over-c
 
 ### Pattern B — Ping-Pong Compute
 
-Used by: **Turing Patterns**, **Swallowtail Butterfly** (for blur).
+Used by: **Turing Patterns**, **Laser Bird** (for bloom blur).
 
 `src/plugin/PingPongFBO.ts` maintains two `RGBA16F` framebuffers (half-float, requiring `EXT_color_buffer_float`). Each frame:
 
@@ -195,6 +195,7 @@ Signed distance field primitives. All return a float where negative = inside, ze
 | `sdCircle(p, r)` | Circle of radius `r` centred at origin |
 | `sdLine(p, a, b)` | Capsule / line segment between `a` and `b` |
 | `sdArc(p, r, aperture)` | Arc of radius `r`, total angle `aperture` (radians) |
+| `sdBezier(p, A, B, C)` | Quadratic bezier A→C with control B; returns `vec2(distance, t)` so strokes can taper along the curve |
 | `opSmoothUnion(d1, d2, k)` | Smooth boolean union with blend radius `k` |
 | `opSmoothSubtraction(d1, d2, k)` | Smooth boolean subtraction |
 
@@ -261,13 +262,15 @@ Every ring is drawn with the ingredients that make it read as inked rather than 
 
 The pond itself is flat gouache: a tonal gradient with soft `fbm` blotches, a sky-reflection patch, and a gentle edge vignette. When the Rain slider is up, thin falling streak dashes are composited at low alpha.
 
-### Swallowtail Butterfly
+### Laser Bird
+
+Modeled on the light-being apparition in *Windaria* (1986): a creature of pure light — white-hot core, hot-pink body glow, deep red-magenta fringe — rendered with the airbrushed "transmitted light" look of backlit cels. No outlines, no interior detail; the glow is the drawing.
 
 Three render passes:
 
-1. **Scene pass** → FBO A: renders the butterfly silhouette (symmetric forewings, hindwings with trailing tails, thin body, antennae) using SDFs and anime-style utilities.
-2. **Blur pass** → FBO B: separable Gaussian blur on FBO A (horizontal then vertical, or a single-pass approximation) to create the soft glow halo.
-3. **Composite pass** → screen: adds the blurred glow (`gl.blendFunc(ONE, ONE)` or shader-side additive mix) over the sharp scene layer. The fringe colour shifts toward warm pink/orange to mimic 80s multi-exposure colour temperature shift.
+1. **Scene pass** → FBO A: the creature as an SDF, shaded as pure light. The bird is built from tapered-thickness quadratic beziers (`sdBezier`, which returns the curve parameter of the closest point so ribbon strokes can taper to the wing tip): two up-swept crescent wings with a carved underside, a slim body with head nub, and a thin swaying beam-tail trailing to the source. A **Form slider morphs the SDF continuously between the bird and a swallowtail butterfly** (the original demo's shape, preserved) — SDFs interpolate cleanly, so mid-morph states stay coherent light-shapes. The interior white ramp is depth-normalized per form so the thick-winged butterfly doesn't white out. Edges waver and brightness flickers on a quantized boil clock (8 Hz), like hand-airbrushed cels repainted frame to frame.
+2. **Blur pass** → FBO B: multi-pass separable Gaussian blur at half resolution, with the kernel normalized to unity (the raw 15-tap weights sum to ~0.803; unnormalized, each pass dims the bloom ~20% and seven passes lose ~80% of the glow energy).
+3. **Composite pass** → screen: starfield sky + scene + bloom, with the wide fringe shifted toward warm red to mimic 80s multi-exposure color temperature drift. Chunky glowing **petals** (rotated squashed-ellipse blobs, like the rose petals swirling in the reference) orbit and rise around the creature, tumbling as they drift and flickering on the boil clock.
 
 ### Boat Wake (Kelvin Wake + Foam Advection)
 
