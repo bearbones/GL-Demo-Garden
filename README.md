@@ -9,7 +9,7 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 | **Wobbly Cells** | Procedural Voronoi cell animation | Mouse moves the warp field |
 | **Turing Patterns** | Gray-Scott reaction-diffusion | Click/drag to seed chemical B |
 | **Bubble Physics** | Vertex-displaced bubble simulation | Passive; bubbles float and collide |
-| **Ripple Drop** | 2D wave-equation heightfield | Click/drag to create ripples |
+| **Ripple Drop** | Hand-inked rain ripples (Windaria 1986 style) | Tap for rings (sometimes a spiral); drag to dot a trail; Rain slider for ambient drops |
 | **Swallowtail Butterfly** | Multi-pass bloom composite | Drag to move; animated butterfly with glow |
 | **Boat Wake** | Kelvin wake foam advection | Passive; foam trails behind boat |
 
@@ -29,7 +29,7 @@ npm run build    # TypeScript check + production bundle
 npm run preview  # Preview the production build locally
 ```
 
-**Requirements**: A browser with WebGL2 and `EXT_color_buffer_float` support (all modern browsers qualify). The compute-heavy demos (Turing Patterns, Ripple Drop, Boat Wake) run simulation grids at half resolution to stay GPU-friendly.
+**Requirements**: A browser with WebGL2 and `EXT_color_buffer_float` support (all modern browsers qualify). The compute-heavy demos (e.g. Turing Patterns) run simulation grids at half resolution to stay GPU-friendly.
 
 ## Tech Stack
 
@@ -62,8 +62,7 @@ src/
 │   ├── turing-patterns/     # index.ts + compute.glsl + display.glsl
 │   ├── bubble-physics/      # index.ts + background.glsl + bubble.vert + bubble.frag
 │   ├── swallowtail-butterfly/  # index.ts + butterfly.glsl + blur.glsl + composite.glsl
-│   ├── ripple-drop/         # index.ts + simulate.glsl + display.glsl
-│   ├── boat-wake/           # index.ts + wake-sim.glsl + display.glsl
+│   ├── ripple-drop/         # index.ts + display.glsl
 │   └── anime-shaders/       # REFERENCE.md — visual technique reference
 └── shaders/
     ├── fullscreen-quad.vert # Clip-space triangle via gl_VertexID (no VBO needed)

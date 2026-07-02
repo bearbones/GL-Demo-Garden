@@ -2,88 +2,149 @@
 precision highp float;
 
 #include "../../shaders/lib/noise.glsl"
-#include "../../shaders/lib/anime-style.glsl"
 
 in vec2 v_uv;
 out vec4 fragColor;
 
-uniform sampler2D u_heightfield;
 uniform vec2 u_resolution;
 uniform float u_time;
-uniform float u_strokeWidth;
-uniform float u_breakFreq;
+uniform float u_squash;       // ellipse foreshortening (1 = round, small = flat)
+uniform float u_life;         // ripple lifetime in seconds
+uniform float u_strokeWidth;  // stroke width, normalized to a 700px-tall frame
+uniform float u_rain;         // 0..1 ambient rain amount
 
-// ── Constants ───────────────────────────────────────────────────────
-const vec3 WATER_DEEP   = vec3(0.039, 0.055, 0.165);   // #0a0e2a
-const vec3 WATER_MID    = vec3(0.055, 0.082, 0.200);
-const vec3 STROKE_COLOR = vec3(0.784, 0.871, 1.0);      // #c8deff
-const float RING_FADE   = 0.6;
-const float PERSPECTIVE_TILT = 0.15;
+// Each ripple: x, y in UV (origin bottom-left), birth time, kind + seed.
+// kind = floor(w): 0 = small rain ring, 1 = tap rings, 2 = spiral.
+const int MAX_RIPPLES = 48;
+uniform vec4 u_ripples[MAX_RIPPLES];
+uniform int u_count;
+
+// ── Palette: flat gouache pond, pale hand-inked strokes ────────────
+const vec3 WATER_DEEP   = vec3(0.075, 0.145, 0.160);
+const vec3 WATER_MID    = vec3(0.180, 0.290, 0.315);
+const vec3 WATER_LIGHT  = vec3(0.300, 0.415, 0.435);
+const vec3 STROKE_COLOR = vec3(0.900, 0.935, 0.905);
+
+// One hand-inked elliptical ring. Positions are pre-squashed; `dir` is the
+// unit vector around the ring so noise wraps without a seam at ±π.
+float ringStroke(float rPix, float radiusPix, float widthPx, vec2 dir, float seed, float gapCount, float gapPhase) {
+  // Wobble the radius so the ellipse reads as drawn, not computed
+  radiusPix *= 1.0 + 0.020 * snoise(dir * 1.6 + seed * 37.0);
+  // Stroke thickness varies along the ring
+  float w = widthPx * (0.85 + 0.35 * snoise(dir * 2.3 + seed * 53.0)) * 0.5;
+  float alpha = 1.0 - smoothstep(w - 0.8, w + 0.8, abs(rPix - radiusPix));
+  // Ink gaps: the ellipse is deliberately incomplete
+  float theta = atan(dir.y, dir.x);
+  float g = sin(theta * gapCount + gapPhase) + 0.8 * snoise(dir * 1.2 + seed * 71.0);
+  return alpha * smoothstep(-0.80, -0.40, g);
+}
 
 void main() {
-  vec2 texel = 1.0 / u_resolution;
   float aspect = u_resolution.x / u_resolution.y;
+  vec2 uvA = vec2(v_uv.x * aspect, v_uv.y);
+  // Pixel scale normalized so stroke widths are resolution-independent
+  float pxScale = u_resolution.y;
+  float widthPx = u_strokeWidth * u_resolution.y / 700.0;
 
-  // Sample heightfield
-  float h = texture(u_heightfield, v_uv).r;
+  // ── Flat painted water: gradient + soft tonal blotches ───────────
+  float blotch = fbm3(uvA * 1.9 + 7.3);
+  float tone = clamp(0.42 + 0.38 * blotch + 0.18 * v_uv.y, 0.0, 1.0);
+  vec3 water = mix(WATER_DEEP, WATER_MID, tone);
 
-  // Gradient of heightfield for edge/ring detection
-  float hL = texture(u_heightfield, v_uv + vec2(-texel.x, 0.0)).r;
-  float hR = texture(u_heightfield, v_uv + vec2( texel.x, 0.0)).r;
-  float hU = texture(u_heightfield, v_uv + vec2(0.0,  texel.y)).r;
-  float hD = texture(u_heightfield, v_uv + vec2(0.0, -texel.y)).r;
+  // Soft sky-reflection patch, upper middle of frame
+  vec2 glowP = uvA - vec2(aspect * 0.55, 0.68);
+  water = mix(water, WATER_LIGHT, 0.30 * exp(-dot(glowP, glowP) * 4.5));
 
-  vec2 grad = vec2(hR - hL, hU - hD) * 0.5;
-  float gradMag = length(grad);
+  // Gentle vignette toward frame edges
+  float edge = smoothstep(0.0, 0.35, v_uv.x) * smoothstep(1.0, 0.65, v_uv.x)
+             * smoothstep(0.0, 0.30, v_uv.y);
+  water = mix(WATER_DEEP, water, 0.55 + 0.45 * edge);
 
-  // Ring detection: zero-crossings / peaks of height
-  float dh_dx = hR - hL;
-  float dh_dy = hU - hD;
-  float curvature = abs((hL + hR + hU + hD) - 4.0 * h);
+  // ── Ripples ───────────────────────────────────────────────────────
+  float stroke = 0.0;
 
-  // Combine gradient magnitude and curvature for ring visibility
-  float ringStrength = smoothstep(0.001, 0.02, gradMag) * smoothstep(0.0, 0.005, curvature);
+  for (int i = 0; i < MAX_RIPPLES; i++) {
+    if (i >= u_count) break;
+    vec4 rp = u_ripples[i];
+    float age = u_time - rp.z;
+    if (age < 0.0 || age > u_life) continue;
+    float kind = floor(rp.w);
+    float seed = fract(rp.w);
+    float lifeFrac = age / u_life;
 
-  // Angle along ring for break pattern
-  float angle = atan(grad.y, grad.x);
+    // Perspective: ripples higher in frame are smaller and flatter
+    float persp = mix(1.20, 0.65, rp.y);
+    float squash = clamp(u_squash * mix(1.20, 0.80, rp.y), 0.05, 1.0);
 
-  // Perspective foreshortening: make strokes thinner toward top
-  float perspFactor = 1.0 - PERSPECTIVE_TILT * (1.0 - v_uv.y);
+    vec2 p = uvA - vec2(rp.x * aspect, rp.y);
+    p.y /= squash;
+    float r = length(p);
+    float rPix = r * pxScale;
+    vec2 dir = p / max(r, 1e-5);
 
-  // Ink stroke with hand-drawn breaks
-  float seed = angle * 3.0 + length(v_uv - 0.5) * 20.0;
-  float strokeAlpha = inkStroke(
-    gradMag - 0.01,   // SDF-like distance
-    u_strokeWidth * perspFactor * 0.03,
-    u_breakFreq,
-    seed
-  );
+    if (kind < 1.5) {
+      // ── Concentric ring drop (rain = 2 rings, tap = 3) ─────────────
+      float maxR = (kind < 0.5 ? 0.068 : 0.165) * persp * (0.75 + 0.5 * seed);
+      float rings = kind < 0.5 ? 2.0 : 3.0;
+      float dim = kind < 0.5 ? 0.85 : 1.0;
 
-  // Additional ring emphasis from height peaks
-  float peakStroke = smoothstep(0.005, 0.015, abs(h)) * ringStrength;
-  strokeAlpha = max(strokeAlpha * ringStrength, peakStroke * 0.6);
+      for (int k = 0; k < 3; k++) {
+        if (float(k) >= rings) break;
+        float u = (lifeFrac - float(k) * 0.16) / 0.70;
+        if (u <= 0.0 || u >= 1.0) continue;
+        float radius = maxR * (1.0 - (1.0 - u) * (1.0 - u));  // ease-out
+        float env = smoothstep(0.0, 0.05, u) * (1.0 - smoothstep(0.72, 1.0, u));
+        float gapCount = 2.0 + floor(mod(seed * 13.0 + float(k), 2.0));
+        float gapPhase = seed * 6.2832 + float(k) * 2.4;
+        stroke += ringStroke(rPix, radius * pxScale, widthPx, dir, seed + float(k) * 0.31, gapCount, gapPhase) * env * dim;
+      }
 
-  // Clamp stroke
-  strokeAlpha = clamp(strokeAlpha, 0.0, 1.0);
+      // Impact flash: a small dot right after the drop lands
+      if (lifeFrac < 0.10) {
+        stroke += (1.0 - smoothstep(0.0, widthPx * 1.6, rPix)) * (1.0 - lifeFrac / 0.10);
+      }
+    } else {
+      // ── Spiral ripple (anime shorthand for dense concentric rings) ──
+      float turns = 3.0;
+      float R = 0.15 * persp * (1.0 - pow(1.0 - min(lifeFrac * 1.25, 1.0), 2.0));
+      float thetaN = atan(p.y, p.x) / 6.2832 + 0.5;  // 0..1 around
+      float rq = r / max(R, 1e-4);
+      float m = rq * turns - thetaN;
+      float k = floor(m + 0.5);
+      float tAlong = (k + thetaN) / turns;           // 0 center → 1 outer tip
 
-  // Fade rings with distance from center (amplitude naturally decays)
-  float distFromCenter = length(v_uv - 0.5);
-  float fadeFactor = 1.0 - smoothstep(0.1, RING_FADE, distFromCenter) * 0.5;
-  strokeAlpha *= fadeFactor;
+      if (k >= 0.0 && k < turns && tAlong < 1.0) {
+        float dPix = abs(m - k) / turns * R * pxScale;
+        float w = widthPx * (0.70 + 0.45 * snoise(dir * 2.1 + seed * 53.0)) * 0.5;
+        float alpha = 1.0 - smoothstep(w - 0.8, w + 0.8, dPix);
+        // Taper both ends of the spiral stroke
+        alpha *= smoothstep(0.02, 0.12, tAlong) * (1.0 - smoothstep(0.80, 1.0, tAlong));
+        // Sparse ink gaps
+        float theta = atan(dir.y, dir.x);
+        float g = sin(theta * 2.0 + seed * 6.2832 + k * 1.7) + 0.8 * snoise(dir * 1.3 + seed * 71.0);
+        alpha *= smoothstep(-0.9, -0.5, g);
+        // Whole spiral fades in fast, out slow
+        alpha *= smoothstep(0.0, 0.04, lifeFrac) * (1.0 - smoothstep(0.60, 1.0, lifeFrac));
+        stroke += alpha;
+      }
+    }
+  }
 
-  // Water base color with subtle variation
-  float waterNoise = snoise(v_uv * 8.0 + u_time * 0.1) * 0.03;
-  vec3 waterColor = mix(WATER_DEEP, WATER_MID, v_uv.y * 0.5 + waterNoise);
+  vec3 color = mix(water, STROKE_COLOR, clamp(stroke, 0.0, 1.0));
 
-  // Height-based subtle color shift
-  waterColor += vec3(0.0, 0.01, 0.03) * h * 10.0;
-
-  // Composite stroke over water
-  vec3 color = mix(waterColor, STROKE_COLOR, strokeAlpha);
-
-  // Subtle specular highlight on wave peaks
-  float specular = smoothstep(0.01, 0.03, h) * 0.15;
-  color += vec3(specular);
+  // ── Rain streaks: thin falling dashes, only when rain is up ───────
+  if (u_rain > 0.001) {
+    float cells = 70.0;
+    float cx = floor(uvA.x * cells);
+    float rn = hash21(vec2(cx, 17.0));
+    if (rn > 1.0 - 0.30 * u_rain) {
+      float speed = 1.6 + rn * 1.2;
+      float f = fract(v_uv.y + u_time * speed + rn * 31.0);
+      float dash = smoothstep(0.00, 0.03, f) * (1.0 - smoothstep(0.10, 0.16, f));
+      float xProf = 1.0 - smoothstep(0.0, 0.10, abs(fract(uvA.x * cells) - 0.5));
+      color += vec3(0.35, 0.40, 0.40) * dash * xProf * 0.10 * u_rain;
+    }
+  }
 
   fragColor = vec4(color, 1.0);
 }
