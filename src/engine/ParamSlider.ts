@@ -66,6 +66,37 @@ export class ParamSlider {
     return config.value;
   }
 
+  /** A labelled dropdown row, for discrete choices (e.g. simulation mode). */
+  addSelect(config: {
+    label: string;
+    options: { value: string; label: string }[];
+    value: string;
+    onChange: (value: string) => void;
+  }) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+
+    const label = document.createElement('span');
+    label.textContent = config.label;
+    label.style.cssText = 'flex:0 0 90px;text-align:right;opacity:0.8;';
+
+    const select = document.createElement('select');
+    select.style.cssText =
+      'flex:1;background:#232329;color:#eee;border:1px solid #3a3a42;border-radius:6px;padding:3px 6px;font:inherit;cursor:pointer;';
+    for (const opt of config.options) {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      select.appendChild(o);
+    }
+    select.value = config.value;
+    select.addEventListener('change', () => config.onChange(select.value));
+
+    row.appendChild(label);
+    row.appendChild(select);
+    this.panel.appendChild(row);
+  }
+
   getValue(label: string): number {
     const input = this.sliders.get(label);
     return input ? parseFloat(input.value) : 0;

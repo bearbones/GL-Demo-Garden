@@ -9,12 +9,27 @@ import injectSrc from './inject.glsl';
 import computeSrc from './crack-compute.glsl';
 import analysisSrc from './analysis.glsl';
 import displaySrc from './display.glsl';
+import stressRelaxSrc from './stress-relax.glsl';
+import growStressSrc from './grow-stress.glsl';
+import growWeibullSrc from './grow-weibull.glsl';
+import stampSegmentsSrc from './stamp-segments.glsl';
+import { computeFractureModes, ModePath } from './fracture-modes';
 
 const COLS = 4; // shatter piece grid
 const ROWS = 3;
 const NP = COLS * ROWS; // piece count — injected into display.glsl at compile
 
-const COMPUTE_STEPS = 6;        // crack-growth steps per frame
+// Four fracture models, all writing into the same damage field so the
+// display, burst, analysis, and shatter pipeline is shared:
+//  - voronoi: quenched cellular fault network + energy flooding (original)
+//  - stress:  phase-field-style continuum damage over a relaxed stress
+//             potential (cracks grow from stress concentration at tips)
+//  - weibull: random-fuse discrete breakdown with Weibull bond strengths
+//  - modes:   Breaking-Good-inspired precomputed weakest paths, revealed
+//             progressively by strikes (pottery cracks)
+type FractureModel = 'voronoi' | 'stress' | 'weibull' | 'modes';
+
+const COMPUTE_STEPS = 6;        // voronoi crack-growth steps per frame
 const TAP_ENERGY = 2.8;
 const TAP_RADIUS = 0.045;       // splat radius, fraction of frame height
 const ANALYSIS_W = 64;
@@ -24,6 +39,13 @@ const SPAN_TARGET = 0.85;       // crack network must reach this far across
 const SHATTER_DELAY = 0.42;     // beat between final burst and pieces falling
 const ENERGY_WINDOW = 8;        // seconds after a tap that fracture energy can
                                 // still be alive; compute passes idle after it
+const LOAD_DURATION = 0.55;     // how long a strike keeps loading the stress field
+const AMBIENT_STRESS = 0.45;    // stored stress held at the slab's frame
+const SETTLE_TAIL = 1.2;        // ambient-driven tip growth continues this long
+                                // after the strike's own load ends
+const GROW_CYCLES = 3;          // stress/weibull: growth steps per frame...
+const RELAX_PER_CYCLE = 5;      // ...each preceded by this many Jacobi steps
+const MAX_SEGS = 24;            // must match stamp-segments.glsl
 const FALL_DURATION = 2.4;
 const GRAVITY = 1.3;            // uv units / s²
 
@@ -46,8 +68,13 @@ export class StoneBreakPlugin implements Plugin {
   private computeProgram!: WebGLProgram;
   private analysisProgram!: WebGLProgram;
   private displayProgram!: WebGLProgram;
+  private relaxProgram!: WebGLProgram;
+  private growStressProgram!: WebGLProgram;
+  private growWeibullProgram!: WebGLProgram;
+  private stampProgram!: WebGLProgram;
   private vao!: WebGLVertexArrayObject;
   private crack!: PingPongFBO;
+  private stress!: PingPongFBO;
 
   // Two full-res baked slabs: [0] = current, [1] = next (revealed on shatter)
   private rockTex: WebGLTexture[] = [];
@@ -71,12 +98,35 @@ export class StoneBreakPlugin implements Plugin {
   private shakeAmp = 0;
   private stallCount = 0;
   private progressAtLastTap = 0;
+  private strikesOnSlab = 0;
 
+  private model: FractureModel = 'voronoi';
   private sliders!: ParamSlider;
-  private kinkAngle = 16;   // degrees of heading jitter per kink
-  private kinkFreq = 13;    // kinks per unit of frame height
-  private branchAngle = 110; // typical junction angle, degrees
-  private branchFreq = 2.2; // primary fault cells per unit of frame height
+  // voronoi fault-geometry sliders
+  private kinkAngle = 16;
+  private kinkFreq = 13;
+  private branchAngle = 110;
+  private branchFreq = 2.2;
+  // stress-field sliders
+  private toughness = 0.015;
+  private hetero = 0.8;
+  // weibull sliders
+  private bondStrength = 0.17;
+  private scatter = 0.9;
+  // fracture-modes sliders
+  private modeCount = 5;
+  private modeRun = 0.16;
+
+  // stress/weibull strike load
+  private loadPos: [number, number] = [0.5, 0.5];
+  private loadUntil = -100;
+  private loadAmp = 1;
+
+  // fracture-modes reveal state
+  private modePaths: ModePath[] = [];
+  private modeReveal: { lo: number; hi: number; depth: number }[] = [];
+  private modeKey = '';
+
   private burstStart = -100;
   private burstPos: [number, number] = [0.5, 0.5];
   private burstStrength = 0;
@@ -93,6 +143,10 @@ export class StoneBreakPlugin implements Plugin {
     this.injectProgram = createProgram(gl, quadVert, injectSrc);
     this.computeProgram = createProgram(gl, quadVert, computeSrc);
     this.analysisProgram = createProgram(gl, quadVert, analysisSrc);
+    this.relaxProgram = createProgram(gl, quadVert, stressRelaxSrc);
+    this.growStressProgram = createProgram(gl, quadVert, growStressSrc);
+    this.growWeibullProgram = createProgram(gl, quadVert, growWeibullSrc);
+    this.stampProgram = createProgram(gl, quadVert, stampSegmentsSrc);
     this.displayProgram = createProgram(
       gl,
       quadVert,
@@ -110,7 +164,10 @@ export class StoneBreakPlugin implements Plugin {
     gl.samplerParameteri(this.linearSampler, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.samplerParameteri(this.linearSampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    this.crack = new PingPongFBO(gl, Math.floor(ctx.width / 2), Math.floor(ctx.height / 2));
+    const simW = Math.floor(ctx.width / 2);
+    const simH = Math.floor(ctx.height / 2);
+    this.crack = new PingPongFBO(gl, simW, simH);
+    this.stress = new PingPongFBO(gl, simW, simH);
 
     this.bakeFBO = gl.createFramebuffer()!;
     this.rockTex = [this.createRockTexture(gl, ctx.width, ctx.height), this.createRockTexture(gl, ctx.width, ctx.height)];
@@ -127,27 +184,92 @@ export class StoneBreakPlugin implements Plugin {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.analysisTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
+    this.clearFields(gl); // prefill the stress field to ambient equilibrium
+    this.buildSliders();
+  }
+
+  // Panel contents depend on the active fracture model, so the panel is
+  // rebuilt whenever the model changes
+  private buildSliders() {
+    this.sliders?.destroy();
     this.sliders = new ParamSlider();
-    this.sliders.addSlider({
-      label: 'Kink Angle',
-      min: 0, max: 35, value: this.kinkAngle, step: 1,
-      onChange: (v) => { this.kinkAngle = v; },
+    this.sliders.addSelect({
+      label: 'Model',
+      value: this.model,
+      options: [
+        { value: 'voronoi', label: 'Voronoi Faults' },
+        { value: 'stress', label: 'Stress Field' },
+        { value: 'weibull', label: 'Weibull Bonds' },
+        { value: 'modes', label: 'Fracture Modes' },
+      ],
+      onChange: (v) => this.setModel(v as FractureModel),
     });
-    this.sliders.addSlider({
-      label: 'Kink Freq',
-      min: 4, max: 26, value: this.kinkFreq, step: 1,
-      onChange: (v) => { this.kinkFreq = v; },
-    });
-    this.sliders.addSlider({
-      label: 'Branch Angle',
-      min: 55, max: 120, value: this.branchAngle, step: 1,
-      onChange: (v) => { this.branchAngle = v; },
-    });
-    this.sliders.addSlider({
-      label: 'Branch Freq',
-      min: 1.2, max: 4.5, value: this.branchFreq, step: 0.1,
-      onChange: (v) => { this.branchFreq = v; },
-    });
+
+    if (this.model === 'voronoi') {
+      this.sliders.addSlider({
+        label: 'Kink Angle',
+        min: 0, max: 35, value: this.kinkAngle, step: 1,
+        onChange: (v) => { this.kinkAngle = v; },
+      });
+      this.sliders.addSlider({
+        label: 'Kink Freq',
+        min: 4, max: 26, value: this.kinkFreq, step: 1,
+        onChange: (v) => { this.kinkFreq = v; },
+      });
+      this.sliders.addSlider({
+        label: 'Branch Angle',
+        min: 55, max: 120, value: this.branchAngle, step: 1,
+        onChange: (v) => { this.branchAngle = v; },
+      });
+      this.sliders.addSlider({
+        label: 'Branch Freq',
+        min: 1.2, max: 4.5, value: this.branchFreq, step: 0.1,
+        onChange: (v) => { this.branchFreq = v; },
+      });
+    } else if (this.model === 'stress') {
+      this.sliders.addSlider({
+        label: 'Toughness',
+        min: 0.005, max: 0.12, value: this.toughness, step: 0.005,
+        onChange: (v) => { this.toughness = v; },
+      });
+      this.sliders.addSlider({
+        label: 'Heterogeneity',
+        min: 0, max: 1, value: this.hetero, step: 0.05,
+        onChange: (v) => { this.hetero = v; },
+      });
+    } else if (this.model === 'weibull') {
+      this.sliders.addSlider({
+        label: 'Strength',
+        min: 0.05, max: 0.4, value: this.bondStrength, step: 0.01,
+        onChange: (v) => { this.bondStrength = v; },
+      });
+      this.sliders.addSlider({
+        label: 'Scatter',
+        min: 0.1, max: 1.5, value: this.scatter, step: 0.05,
+        onChange: (v) => { this.scatter = v; },
+      });
+    } else {
+      this.sliders.addSlider({
+        label: 'Mode Count',
+        min: 2, max: 8, value: this.modeCount, step: 1,
+        onChange: (v) => { this.modeCount = v; this.modeKey = ''; },
+      });
+      this.sliders.addSlider({
+        label: 'Crack Run',
+        min: 0.06, max: 0.5, value: this.modeRun, step: 0.02,
+        onChange: (v) => { this.modeRun = v; },
+      });
+    }
+  }
+
+  private setModel(model: FractureModel) {
+    if (model === this.model) return;
+    this.model = model;
+    this.buildSliders();
+    // A model switch starts the current slab fresh: damage semantics
+    // differ enough between models that mixing fields reads as noise
+    this.clearFields();
+    this.resetInteractionState();
   }
 
   private uni(gl: WebGL2RenderingContext, program: WebGLProgram, name: string) {
@@ -184,17 +306,30 @@ export class StoneBreakPlugin implements Plugin {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  private clearCrackField(gl: WebGL2RenderingContext) {
+  private clearFields(gl?: WebGL2RenderingContext) {
+    const g = gl ?? this.lastGl!;
     for (let i = 0; i < 2; i++) {
-      this.crack.bindWrite(gl);
-      gl.clear(gl.COLOR_BUFFER_BIT); // engine clear colour (0,0,0,1) = no damage
+      this.crack.bindWrite(g);
+      g.clear(g.COLOR_BUFFER_BIT); // engine clear colour (0,0,0,1) = no damage
       this.crack.swap();
     }
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // The stress field starts AT ambient equilibrium — a cold start from
+    // zero would sweep a transient relaxation front in from the frame
+    // and nucleate phantom cracks along it
+    g.clearColor(AMBIENT_STRESS, 0, 0, 1);
+    for (let i = 0; i < 2; i++) {
+      this.stress.bindWrite(g);
+      g.clear(g.COLOR_BUFFER_BIT);
+      this.stress.swap();
+    }
+    g.clearColor(0, 0, 0, 1); // restore the engine's clear colour
+    g.bindFramebuffer(g.FRAMEBUFFER, null);
   }
 
+  private lastGl: WebGL2RenderingContext | null = null;
+
   // Everything that must go back to zero when a fresh, uncracked slab
-  // takes over — called from both resetSlab() and resize()
+  // takes over — called from resetSlab(), resize(), and model switches
   private resetInteractionState() {
     this.phase = 'intact';
     this.breakProgress = 0;
@@ -202,6 +337,17 @@ export class StoneBreakPlugin implements Plugin {
     this.stallCount = 0;
     this.progressAtLastTap = 0;
     this.pendingTaps = [];
+    this.loadUntil = -100;
+    this.strikesOnSlab = 0;
+    this.modeKey = ''; // fracture-mode paths are recomputed lazily per slab
+  }
+
+  private ensureModePaths(aspect: number) {
+    const key = `${this.seeds[0].toFixed(4)}:${this.modeCount}:${aspect.toFixed(3)}`;
+    if (key === this.modeKey) return;
+    this.modeKey = key;
+    this.modePaths = computeFractureModes(this.seeds[0], aspect, this.modeCount);
+    this.modeReveal = this.modePaths.map(() => ({ lo: -1, hi: -1, depth: 2.8 }));
   }
 
   resize(ctx: EngineContext) {
@@ -217,7 +363,11 @@ export class StoneBreakPlugin implements Plugin {
     this.rockTex = [this.createRockTexture(gl, ctx.width, ctx.height), this.createRockTexture(gl, ctx.width, ctx.height)];
     this.bakeRock(ctx, 0);
     this.bakeRock(ctx, 1);
-    this.crack.resize(gl, Math.floor(ctx.width / 2), Math.floor(ctx.height / 2));
+    const simW = Math.floor(ctx.width / 2);
+    const simH = Math.floor(ctx.height / 2);
+    this.crack.resize(gl, simW, simH);
+    this.stress.resize(gl, simW, simH);
+    this.clearFields(gl);
     this.resetInteractionState();
   }
 
@@ -231,16 +381,22 @@ export class StoneBreakPlugin implements Plugin {
     const { gl, time, dt } = ctx;
     const aspect = ctx.width / ctx.height;
     this.frame++;
+    this.lastGl = gl;
 
     gl.bindVertexArray(this.vao);
 
     if (this.phase === 'intact') {
       this.processTaps(ctx, aspect);
-      // Fracture energy dies out a few seconds after the last strike;
-      // skip the compute passes entirely while the slab is idle
-      if (time - this.lastTapTime < ENERGY_WINDOW) {
-        this.stepCracks(gl, aspect);
-        // Analyse damage while fracture energy could still be spreading
+      const active = time - this.lastTapTime < ENERGY_WINDOW;
+      if (active) {
+        if (this.model === 'voronoi') {
+          this.stepCracks(gl, aspect);
+        } else if (this.model === 'stress' || this.model === 'weibull') {
+          // Keep relaxing past the load so ambient-driven tip growth and
+          // avalanches settle
+          if (time < this.loadUntil + SETTLE_TAIL) this.stepStress(gl, ctx, aspect);
+        }
+        // 'modes' needs no per-frame simulation: strikes stamp directly
         if (this.frame % 10 === 0 && time - this.lastTapTime < 6) {
           this.analyseDamage(ctx);
         }
@@ -275,22 +431,40 @@ export class StoneBreakPlugin implements Plugin {
         this.progressAtLastTap = this.breakProgress;
       }
 
+      // Impact crater + spokes are stamped in every model; only the
+      // voronoi model also uses the fracture-energy channel
+      const energy = this.model === 'voronoi' ? TAP_ENERGY * (1 + 0.4 * this.stallCount) : 0;
+      const spokeLen = this.model === 'modes' ? 0.05 : 0.08 + Math.random() * 0.05;
+      // In the field-driven models the strike's damage must stay thin:
+      // spoke slits concentrate the stress field at their tips and keep
+      // growing, while a fat crater blob screens itself and stalls
+      const radius = this.model === 'stress' || this.model === 'weibull' ? 0.028 : TAP_RADIUS;
       gl.useProgram(this.injectProgram);
       gl.uniform1i(this.uni(gl, this.injectProgram, 'u_state'), 0);
       gl.uniform2f(this.uni(gl, this.injectProgram, 'u_center'), x, y);
-      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_energy'), TAP_ENERGY * (1 + 0.4 * this.stallCount));
-      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_radius'), TAP_RADIUS);
+      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_energy'), energy);
+      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_radius'), radius);
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_aspect'), aspect);
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeRot'), Math.random() * Math.PI * 2);
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeCount'), 5 + Math.floor(Math.random() * 3));
-      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeLen'), 0.08 + Math.random() * 0.05);
+      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeLen'), spokeLen);
       this.crack.bindRead(gl, 0);
       this.crack.bindWrite(gl);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       this.crack.swap();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      if (this.model === 'stress' || this.model === 'weibull') {
+        this.loadPos = [x, y];
+        this.loadUntil = time + LOAD_DURATION;
+        this.loadAmp = (this.model === 'weibull' ? 1.4 : 1) + 0.25 * this.stallCount;
+      } else if (this.model === 'modes') {
+        this.exciteModePath(gl, x, y, aspect);
+      }
 
       this.lastTap = [x, y];
       this.lastTapTime = time;
+      this.strikesOnSlab++;
       this.shakeAmp = Math.min(this.shakeAmp + 0.004 + 0.014 * this.breakProgress * this.breakProgress, 0.02);
       // Nearing the breaking point: a beat of light shafts from the deep cracks
       if (this.breakProgress > 0.6) {
@@ -301,6 +475,8 @@ export class StoneBreakPlugin implements Plugin {
     }
     this.pendingTaps = [];
   }
+
+  // ── Voronoi Faults: energy flooding through a cellular fault field ──
 
   private stepCracks(gl: WebGL2RenderingContext, aspect: number) {
     gl.useProgram(this.computeProgram);
@@ -324,6 +500,152 @@ export class StoneBreakPlugin implements Plugin {
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
+
+  // ── Stress Field / Weibull Bonds: relax potential, then grow damage ──
+
+  private stepStress(gl: WebGL2RenderingContext, ctx: EngineContext, aspect: number) {
+    const texelX = 1 / this.crack.width;
+    const texelY = 1 / this.crack.height;
+    const loadActive = ctx.time < this.loadUntil;
+    const grow = this.model === 'stress' ? this.growStressProgram : this.growWeibullProgram;
+
+    for (let cycle = 0; cycle < GROW_CYCLES; cycle++) {
+      gl.useProgram(this.relaxProgram);
+      gl.uniform1i(this.uni(gl, this.relaxProgram, 'u_stress'), 0);
+      gl.uniform1i(this.uni(gl, this.relaxProgram, 'u_state'), 1);
+      gl.uniform2f(this.uni(gl, this.relaxProgram, 'u_texel'), texelX, texelY);
+      gl.uniform2f(this.uni(gl, this.relaxProgram, 'u_load'), this.loadPos[0], this.loadPos[1]);
+      gl.uniform1f(this.uni(gl, this.relaxProgram, 'u_loadAmp'), loadActive ? this.loadAmp : 0);
+      gl.uniform1f(this.uni(gl, this.relaxProgram, 'u_loadRadius'), 0.05);
+      gl.uniform1f(this.uni(gl, this.relaxProgram, 'u_ambient'), AMBIENT_STRESS);
+      gl.uniform1f(this.uni(gl, this.relaxProgram, 'u_aspect'), aspect);
+      this.crack.bindRead(gl, 1);
+      for (let i = 0; i < RELAX_PER_CYCLE; i++) {
+        this.stress.bindRead(gl, 0);
+        this.stress.bindWrite(gl);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        this.stress.swap();
+      }
+
+      gl.useProgram(grow);
+      gl.uniform1i(this.uni(gl, grow, 'u_state'), 0);
+      gl.uniform1i(this.uni(gl, grow, 'u_stress'), 1);
+      gl.uniform2f(this.uni(gl, grow, 'u_texel'), texelX, texelY);
+      gl.uniform1f(this.uni(gl, grow, 'u_seed'), this.seeds[0]);
+      gl.uniform1f(this.uni(gl, grow, 'u_aspect'), aspect);
+      if (this.model === 'stress') {
+        // Vary the RNG per growth cycle within the frame too
+        gl.uniform1f(this.uni(gl, grow, 'u_time'), ctx.time + cycle * 0.137);
+        gl.uniform1f(this.uni(gl, grow, 'u_toughness'), this.toughness);
+        gl.uniform1f(this.uni(gl, grow, 'u_hetero'), this.hetero);
+      } else {
+        gl.uniform1f(this.uni(gl, grow, 'u_strength'), this.bondStrength);
+        gl.uniform1f(this.uni(gl, grow, 'u_scatter'), this.scatter);
+        // Subcritical crack growth: every strike fatigues the slab, so
+        // each one pushes the near-critical front a bit further
+        gl.uniform1f(this.uni(gl, grow, 'u_fatigue'), 1 / (1 + 0.07 * this.strikesOnSlab));
+      }
+      this.stress.bindRead(gl, 1);
+      this.crack.bindRead(gl, 0);
+      this.crack.bindWrite(gl);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      this.crack.swap();
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  // ── Fracture Modes: strikes reveal precomputed weakest paths ─────────
+
+  private exciteModePath(gl: WebGL2RenderingContext, x: number, y: number, aspect: number) {
+    this.ensureModePaths(aspect);
+    if (this.modePaths.length === 0) return;
+
+    const px = x * aspect;
+    let best = 0;
+    let bestIdx = 0;
+    let bestD = Infinity;
+    this.modePaths.forEach((path, k) => {
+      path.pts.forEach((pt, i) => {
+        const d = Math.hypot(pt.x - px, pt.y - y);
+        if (d < bestD) {
+          bestD = d;
+          best = k;
+          bestIdx = i;
+        }
+      });
+    });
+
+    const path = this.modePaths[best];
+    const rv = this.modeReveal[best];
+    const last = path.pts.length - 1;
+    const run = Math.max(2, Math.round(path.pts.length * this.modeRun * (1 + 0.3 * this.stallCount)));
+    if (rv.lo < 0) {
+      rv.lo = Math.max(0, bestIdx - run);
+      rv.hi = Math.min(last, bestIdx + run);
+    } else {
+      // Re-striking a revealed crack deepens it and runs it further
+      // along its predestined line in both directions
+      rv.depth = Math.min(rv.depth + 0.7, 6.5);
+      rv.lo = Math.max(0, rv.lo - run);
+      rv.hi = Math.min(last, rv.hi + run);
+    }
+    this.stampReveal(gl, path, rv, aspect);
+  }
+
+  private stampReveal(
+    gl: WebGL2RenderingContext,
+    path: ModePath,
+    rv: { lo: number; hi: number; depth: number },
+    aspect: number,
+  ) {
+    const segs: number[] = [];
+    const depths: number[] = [];
+    for (let i = rv.lo; i < rv.hi; i++) {
+      const a = path.pts[i];
+      const b = path.pts[i + 1];
+      segs.push(a.x, a.y, b.x, b.y);
+      // Taper toward the ends of the revealed interval (unless the
+      // interval has reached the slab edge)
+      const fromEnd = Math.min(i - rv.lo, rv.hi - 1 - i);
+      const atEdge = (i - rv.lo < 4 && rv.lo === 0) || (rv.hi - 1 - i < 4 && rv.hi === path.pts.length - 1);
+      depths.push(rv.depth * (atEdge || fromEnd >= 4 ? 1 : 0.5 + 0.125 * fromEnd));
+    }
+    // Side branches whose anchor falls in the revealed interval come
+    // along, shallower than the main line and tapering to their tips
+    for (const br of path.branches) {
+      if (br.anchor < rv.lo || br.anchor > rv.hi) continue;
+      for (let i = 0; i + 1 < br.pts.length; i++) {
+        const a = br.pts[i];
+        const b = br.pts[i + 1];
+        segs.push(a.x, a.y, b.x, b.y);
+        const t = 1 - i / (br.pts.length - 1);
+        depths.push(rv.depth * (0.3 + 0.3 * t));
+      }
+    }
+
+    gl.useProgram(this.stampProgram);
+    gl.uniform1i(this.uni(gl, this.stampProgram, 'u_state'), 0);
+    // Re-struck cracks widen as they deepen, like a joint being worked open
+    gl.uniform1f(this.uni(gl, this.stampProgram, 'u_width'), 0.006 + 0.0012 * (rv.depth - 2.8));
+    gl.uniform1f(this.uni(gl, this.stampProgram, 'u_aspect'), aspect);
+    for (let off = 0; off < segs.length / 4; off += MAX_SEGS) {
+      const count = Math.min(MAX_SEGS, segs.length / 4 - off);
+      const segArr = new Float32Array(MAX_SEGS * 4);
+      const depthArr = new Float32Array(MAX_SEGS);
+      segArr.set(segs.slice(off * 4, (off + count) * 4));
+      depthArr.set(depths.slice(off, off + count));
+      gl.uniform4fv(this.uni(gl, this.stampProgram, 'u_segs[0]'), segArr);
+      gl.uniform1fv(this.uni(gl, this.stampProgram, 'u_segDepth[0]'), depthArr);
+      gl.uniform1i(this.uni(gl, this.stampProgram, 'u_segCount'), count);
+      this.crack.bindRead(gl, 0);
+      this.crack.bindWrite(gl);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      this.crack.swap();
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  // ── Shared analysis / shatter pipeline ───────────────────────────────
 
   private analyseDamage(ctx: EngineContext) {
     const { gl, time } = ctx;
@@ -457,7 +779,7 @@ export class StoneBreakPlugin implements Plugin {
     this.rockTex.reverse();
     this.seeds = [this.seeds[1], Math.random() * 100];
     this.bakeRock(ctx, 1);
-    this.clearCrackField(ctx.gl);
+    this.clearFields(ctx.gl);
     this.resetInteractionState();
   }
 
@@ -511,6 +833,10 @@ export class StoneBreakPlugin implements Plugin {
     gl.deleteProgram(this.computeProgram);
     gl.deleteProgram(this.analysisProgram);
     gl.deleteProgram(this.displayProgram);
+    gl.deleteProgram(this.relaxProgram);
+    gl.deleteProgram(this.growStressProgram);
+    gl.deleteProgram(this.growWeibullProgram);
+    gl.deleteProgram(this.stampProgram);
     gl.deleteVertexArray(this.vao);
     gl.deleteFramebuffer(this.bakeFBO);
     gl.deleteFramebuffer(this.analysisFBO);
@@ -519,6 +845,7 @@ export class StoneBreakPlugin implements Plugin {
     gl.deleteTexture(this.rockTex[0]);
     gl.deleteTexture(this.rockTex[1]);
     this.crack.destroy(gl);
+    this.stress.destroy(gl);
     this.sliders.destroy();
   }
 }
