@@ -70,14 +70,22 @@ float voroEdge(vec2 p) {
 
 void rockFields(vec2 uv, out float primary, out float web) {
   vec2 p = vec2(uv.x * u_aspect, uv.y);
-  // Smooth wander + per-cell offset kinks; the offsets stay smaller than
-  // the fault valley width so the displaced line segments still connect
-  vec2 wander = 0.006 * vec2(snoise(p * 2.5 + u_seed), snoise(p * 2.5 + u_seed + 17.3));
-  // Kink grid is rotated so its discontinuity seams never read as
-  // axis-aligned lines in the crack pattern
+  // Kinks are per-cell ROTATIONS of the lookup space about the cell
+  // centre (on a rotated grid so seams never read axis-aligned): inside
+  // each cell the fault keeps its heading, and at every cell border the
+  // heading jumps ~±12° — angular kinks, not sideways jogs. A tiny
+  // translation adds irregularity. Both stay small enough that the
+  // displaced segments still connect across borders.
   vec2 pr = mat2(0.891, 0.454, -0.454, 0.891) * p;
-  vec2 kink = 0.017 * (hash22(floor(pr * 13.0) + u_seed + 3.7) - 0.5);
-  primary = voroEdge((p + wander + kink) * 2.2 + u_seed * 7.0) * 1.4;
+  vec2 cellId = floor(pr * 13.0);
+  vec2 rel = pr - (cellId + 0.5) / 13.0;
+  float ang = (hash21(cellId + u_seed + 3.7) - 0.5) * 0.42;
+  float ca = cos(ang);
+  float sa = sin(ang);
+  vec2 prw = (cellId + 0.5) / 13.0 + mat2(ca, sa, -sa, ca) * rel
+           + 0.008 * (hash22(cellId + u_seed + 9.1) - 0.5);
+  vec2 pw = mat2(0.891, -0.454, 0.454, 0.891) * prw;
+  primary = voroEdge(pw * 2.2 + u_seed * 7.0) * 1.4;
   web = voroEdge(p * 8.0 + u_seed * 3.0) * 2.6 + WEB_TAX;
 }
 
@@ -109,8 +117,11 @@ void main() {
   float e = max(s.g, best - cost) * mix(DECAY, DECAY_CONDUIT, conduit);
   if (e < CUTOFF) e = 0.0;
 
-  float valleyP = smoothstep(0.035, 0.012, primary);
-  float valleyW = smoothstep(0.03, 0.012, web);
+  // Gaussian deposit profiles: sharply peaked on the fault line, so a
+  // young crack only crosses the display threshold in a hairline core
+  // and widens gradually as it deepens
+  float valleyP = exp(-pow(primary / 0.014, 2.0));
+  float valleyW = exp(-pow(max(web - WEB_TAX, 0.0) / 0.012, 2.0));
   float deposit = e * DEPTH_RATE * valleyP
                 + e * DEPTH_RATE * 0.9 * valleyW * (1.0 - smoothstep(WEB_CAP - 0.2, WEB_CAP, s.r));
   float d = s.r + deposit;

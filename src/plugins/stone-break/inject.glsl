@@ -34,7 +34,7 @@ void main() {
 
   // Radial spokes: sharp angular ridges, broken up along their length
   float theta = atan(d.y, d.x);
-  float spoke = pow(0.5 + 0.5 * cos(theta * u_spokeCount + u_spokeRot), 30.0);
+  float spoke = pow(0.5 + 0.5 * cos(theta * u_spokeCount + u_spokeRot), 60.0);
   spoke *= smoothstep(u_spokeLen, u_spokeLen * 0.2, r);
   spoke *= 0.55 + 0.65 * snoise(vec2(theta * 3.0 + u_spokeRot * 5.0, r * 40.0));
   spoke = max(spoke, 0.0);
