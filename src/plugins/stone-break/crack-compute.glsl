@@ -6,16 +6,27 @@ precision highp float;
 // One crack-propagation step over the damage field (run several times
 // per frame, ping-pong).
 //
-// State encoding: R = crack depth (accumulates, never heals),
-//                 G = live fracture energy.
+// State encoding: R = crack depth, G = live fracture energy.
 //
-// Energy spreads to neighbours, paying a cost set by the rock's local
-// strength. Strength is a min-of-ridges noise field: its valleys are
-// thin connected curves, so energy only travels far along those curves
-// and the surviving trace is a branching crack rather than a blob.
-// Pixels that are already cracked conduct energy almost for free, so a
-// repeat tap floods the existing network and pushes new growth out of
-// its tips — deepening and branching what was already there.
+// Energy spreads to neighbours, paying a cost set by two cellular fault
+// fields, and damage is only recorded along their valleys:
+//
+//  - PRIMARY faults: huge Voronoi cells, so the borders are long lines
+//    that reach across the screen. The lookup space is domain-warped by
+//    smooth noise (wander) plus a per-cell random offset (sharp kinks),
+//    giving the jittery-angular look of a real sidewalk crack. Depth is
+//    uncapped: these are the cracks that deepen, widen, and eventually
+//    split the slab.
+//
+//  - WEB: a fine cellular field whose valleys carry a cost floor, so
+//    tap energy only floods it for a short radius — thin spiderweb
+//    crackle around the strike point. Its depth saturates at WEB_CAP,
+//    below both the "deep" analysis threshold and the ember/light-shaft
+//    thresholds, so repeated strikes can't chew the web into a hole.
+//
+// Conduction keys on depth only primary cracks (and the strike-point
+// spokes) exceed, so a repeat tap floods the existing long cracks
+// almost for free and pushes new growth out of their tips.
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -27,13 +38,18 @@ uniform float u_aspect;
 
 const float BASE_COST = 0.008;     // travel cost along a perfect fault line
 const float STRENGTH_COST = 1.6;   // extra cost through solid rock
-const float CONDUCT = 0.9;         // cost reduction inside existing cracks
-const float DECAY = 0.988;         // per-step energy dissipation
-const float DEPTH_RATE = 0.05;     // depth accumulated per step per unit energy
+const float WEB_TAX = 0.014;       // cost floor on web valleys → small radius
+const float CONDUCT = 0.9;         // cost reduction inside deep cracks
+const float DECAY = 0.972;         // per-step energy dissipation in rock —
+                                   // caps how far ONE tap can grow a crack
+const float DECAY_CONDUIT = 0.995; // …but deep cracks channel energy with
+                                   // little loss, so retaps reach the tips
+const float DEPTH_RATE = 0.07;     // depth accumulated per step per unit energy
+const float WEB_CAP = 1.3;         // web crackle saturates here (deep = 1.4)
 const float CUTOFF = 0.015;        // energy below this dies out
 
 // F2 − F1 cellular distance: zero exactly on Voronoi cell borders, which
-// are straight segments meeting at sharp junctions — sidewalk-crack angles
+// are straight segments meeting at sharp junctions
 float voroEdge(vec2 p) {
   vec2 ip = floor(p);
   vec2 fp = fract(p);
@@ -52,13 +68,17 @@ float voroEdge(vec2 p) {
   return sqrt(f2) - sqrt(f1);
 }
 
-float rockStrength(vec2 uv) {
+void rockFields(vec2 uv, out float primary, out float web) {
   vec2 p = vec2(uv.x * u_aspect, uv.y);
-  float v1 = voroEdge(p * 3.0 + u_seed * 7.0);  // primary slab joints
-  float v2 = voroEdge(p * 8.0 + u_seed * 3.0);  // fine connector web
-  // The fine web costs more, so it's only affordable near a strike —
-  // dense spiderwebbing close in, long straight faults farther out
-  return min(v1 * 1.4, v2 * 2.6);
+  // Smooth wander + per-cell offset kinks; the offsets stay smaller than
+  // the fault valley width so the displaced line segments still connect
+  vec2 wander = 0.018 * vec2(snoise(p * 2.5 + u_seed), snoise(p * 2.5 + u_seed + 17.3));
+  // Kink grid is rotated so its discontinuity seams never read as
+  // axis-aligned lines in the crack pattern
+  vec2 pr = mat2(0.891, 0.454, -0.454, 0.891) * p;
+  vec2 kink = 0.03 * (hash22(floor(pr * 11.0) + u_seed + 3.7) - 0.5);
+  primary = voroEdge((p + wander + kink) * 2.2 + u_seed * 7.0) * 1.4;
+  web = voroEdge(p * 8.0 + u_seed * 3.0) * 2.6 + WEB_TAX;
 }
 
 void main() {
@@ -77,19 +97,23 @@ void main() {
     }
   }
 
-  float st = rockStrength(v_uv);
-  float cost = BASE_COST + STRENGTH_COST * st;
-  // Only genuinely cracked pixels conduct — faint damage doesn't count,
-  // or the conductivity feedback swells cracks into blobs
-  cost *= 1.0 - CONDUCT * clamp(s.r - 0.25, 0.0, 1.0);
+  float primary, web;
+  rockFields(v_uv, primary, web);
 
-  float e = max(s.g, best - cost) * DECAY;
+  float cost = BASE_COST + STRENGTH_COST * min(primary, web);
+  // Deep cracks conduct: the gate sits above WEB_CAP so only primary
+  // faults and strike spokes become highways for later taps
+  float conduit = clamp((s.r - 1.0) / 1.5, 0.0, 1.0);
+  cost *= 1.0 - CONDUCT * conduit;
+
+  float e = max(s.g, best - cost) * mix(DECAY, DECAY_CONDUIT, conduit);
   if (e < CUTOFF) e = 0.0;
 
-  // Damage is only recorded along fault valleys (and in existing cracks);
-  // solid rock passes energy near the impact but doesn't scar
-  float valley = smoothstep(0.1, 0.03, st);
-  float d = s.r + e * DEPTH_RATE * max(valley, step(0.25, s.r));
+  float valleyP = smoothstep(0.05, 0.015, primary);
+  float valleyW = smoothstep(0.04, 0.015, web);
+  float deposit = e * DEPTH_RATE * valleyP
+                + e * DEPTH_RATE * 0.9 * valleyW * (1.0 - smoothstep(WEB_CAP - 0.2, WEB_CAP, s.r));
+  float d = s.r + deposit;
 
   fragColor = vec4(d, e, 0.0, 1.0);
 }

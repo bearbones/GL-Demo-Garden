@@ -278,16 +278,14 @@ A slab of procedurally generated rock fills the canvas. Tapping strikes it: crac
 
 **Rock slabs** are baked once per rock (never per frame) from a seeded shader into an RGBA8 texture. Three pattern families — speckled igneous, banded sedimentary, veined crystalline — each with three palettes, give nine mineral looks chosen by hashing the seed. Two slabs exist at any time: the current one and the one revealed on shatter.
 
-**Crack propagation** is a ping-pong compute field at half resolution (R = crack depth, G = live fracture energy). A tap splats energy plus a few noise-broken radial spokes of immediate damage. Each compute step (6/frame), every pixel takes the strongest energy in its 8-neighbourhood minus a travel cost:
+**Crack propagation** is a ping-pong compute field at half resolution (R = crack depth, G = live fracture energy). A tap splats energy plus a few noise-broken radial spokes of immediate damage. Each compute step (6/frame), every pixel takes the strongest energy in its 8-neighbourhood minus a travel cost derived from two F2−F1 cellular (Voronoi-edge) distance fields, whose zero sets are straight segments meeting at sharp junctions:
 
-```
-cost = BASE + STRENGTH · rockStrength(uv)
-```
+- **Primary faults**: huge cells, so the borders form long lines reaching across the screen. The lookup space is domain-warped by gentle low-frequency noise (wander) plus a per-cell random offset on a rotated grid (sharp kinks every ~50 px) — the jittery-angular geometry of a real sidewalk crack. Depth here is uncapped; these are the cracks that deepen, widen, ember, and finally split the slab.
+- **Web**: a fine field whose valleys carry a cost floor, so tap energy only floods it for a short radius — thin spiderweb crackle around the strike point. Web depth saturates below every threshold that matters (deep-crack analysis, ember, light shafts, conduction), so repeated strikes can't chew the web into a hole.
 
-`rockStrength` is the min of two F2−F1 cellular (Voronoi-edge) distance fields. Its zero set is straight segments meeting at sharp junctions — sidewalk-crack geometry — so energy travels far along cell borders and dies quickly in solid rock. The coarse field forms long primary faults; the finer, more expensive web is only affordable near the strike, producing spiderwebbing there. Two asymmetries drive the interaction loop:
+Damage is only recorded along fault valleys — solid rock conducts energy near the impact but doesn't scar, keeping cracks as lines instead of blobs. Strike-local damage (crater + spokes) saturates at a fixed cap for the same reason.
 
-- **Damage is only recorded along fault valleys** (or where a crack already exists). Solid rock conducts energy near the impact but doesn't scar, keeping cracks as lines instead of blobs.
-- **Existing cracks conduct almost for free** (cost × 0.1 once depth > 1.25), so a repeat tap floods the old network and pushes growth out of its tips — the same strike point keeps deepening, branching, and lengthening its own cracks.
+Repeat taps grow the long cracks rather than the crackle, via two conduction rules keyed to a depth only primary cracks and spokes exceed: deep cracks cost ~10× less to traverse, and — the important one — they nearly eliminate the per-step energy decay (0.995 vs 0.972 in rock). Rock decay caps how far one tap can grow a fresh crack, while conduits deliver the next tap's energy to the far tips almost intact, so every strike on a cracked slab visibly lengthens and branches the existing network. If a strike lands far from any fault and progress stalls, tap energy escalates ("working the stone") until it couples.
 
 **Break detection** runs every 10 frames while energy is live: a 64×40 analysis pass supersamples the crack field (6×6 per cell — cracks are thin, point sampling would miss them) and is read back with `readPixels`. The CPU computes deep-crack coverage, max depth, and the bounding-box span of the cracked region. The slab breaks only when the network spans ~85% of the screen in some axis *and* enough of it runs deep; the min of those scores is `breakProgress`.
 

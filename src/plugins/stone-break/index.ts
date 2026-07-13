@@ -12,7 +12,7 @@ import displaySrc from './display.glsl';
 const NP = 12; // shatter piece count — must match NP in display.glsl
 
 const COMPUTE_STEPS = 6;        // crack-growth steps per frame
-const TAP_ENERGY = 1.9;
+const TAP_ENERGY = 2.4;
 const TAP_RADIUS = 0.045;       // splat radius, fraction of frame height
 const ANALYSIS_W = 64;
 const ANALYSIS_H = 40;
@@ -64,6 +64,8 @@ export class StoneBreakPlugin implements Plugin {
   private pendingTaps: [number, number][] = [];
 
   private shakeAmp = 0;
+  private stallCount = 0;
+  private progressAtLastTap = 0;
   private burstStart = -100;
   private burstPos: [number, number] = [0.5, 0.5];
   private burstStrength = 0;
@@ -192,15 +194,24 @@ export class StoneBreakPlugin implements Plugin {
   private processTaps(ctx: EngineContext, aspect: number) {
     const { gl, time } = ctx;
     for (const [x, y] of this.pendingTaps) {
+      // Working the stone: if the last strike barely moved the needle
+      // (e.g. it landed far from any fault), hit harder each time
+      if (this.breakProgress - this.progressAtLastTap < 0.04) {
+        this.stallCount = Math.min(this.stallCount + 1, 4);
+      } else {
+        this.stallCount = 0;
+      }
+      this.progressAtLastTap = this.breakProgress;
+
       gl.useProgram(this.injectProgram);
       gl.uniform1i(this.uni(gl, this.injectProgram, 'u_state'), 0);
       gl.uniform2f(this.uni(gl, this.injectProgram, 'u_center'), x, y);
-      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_energy'), TAP_ENERGY);
+      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_energy'), TAP_ENERGY * (1 + 0.5 * this.stallCount));
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_radius'), TAP_RADIUS);
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_aspect'), aspect);
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeRot'), Math.random() * Math.PI * 2);
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeCount'), 5 + Math.floor(Math.random() * 3));
-      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeLen'), 0.06 + Math.random() * 0.04);
+      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeLen'), 0.08 + Math.random() * 0.05);
       this.crack.bindRead(gl, 0);
       this.crack.bindWrite(gl);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -372,6 +383,8 @@ export class StoneBreakPlugin implements Plugin {
     this.phase = 'intact';
     this.breakProgress = 0;
     this.lastTapTime = -100;
+    this.stallCount = 0;
+    this.progressAtLastTap = 0;
   }
 
   private draw(ctx: EngineContext, aspect: number) {

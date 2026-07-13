@@ -48,14 +48,14 @@ vec3 shadeRock(sampler2D rock, vec2 uv, float emberAmt) {
 
   float d = crackDepth(uv);
   float dn = clamp(d / 6.0, 0.0, 1.0);
-  float m = smoothstep(0.5, 1.5, d);
+  float m = smoothstep(0.45, 1.45, d);
 
   // Soft ambient occlusion halo around the crack network
-  vec2 o = u_stateTexel * 2.0;
+  vec2 o = u_stateTexel * 1.5;
   float ao = crackDepth(uv + vec2(o.x, 0.0)) + crackDepth(uv - vec2(o.x, 0.0)) +
              crackDepth(uv + vec2(0.0, o.y)) + crackDepth(uv - vec2(0.0, o.y));
   ao = clamp(ao * 0.25 * 0.5, 0.0, 1.0);
-  col *= 1.0 - 0.3 * ao;
+  col *= 1.0 - 0.22 * ao;
 
   // Chipped-edge rim light from the field gradient (key light top-left)
   vec2 g = vec2(
