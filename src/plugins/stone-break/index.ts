@@ -40,6 +40,10 @@ const SHATTER_DELAY = 0.42;     // beat between final burst and pieces falling
 const ENERGY_WINDOW = 8;        // seconds after a tap that fracture energy can
                                 // still be alive; compute passes idle after it
 const LOAD_DURATION = 0.55;     // how long a strike keeps loading the stress field
+const SCUFF_TOUGHNESS = 0.025;  // restrained crazing for off-fault pottery strikes
+const SCUFF_RADIUS = 0.13;      // scuff growth confined to this disk around the tap
+const NEAR_FAULT = 0.11;        // strike distance (uv height) counting as ON a fault
+const MID_FAULT = 0.26;         // ...and as "sort of near": scuff + slight opening
 const AMBIENT_STRESS = 0.45;    // stored stress held at the slab's frame
 const SETTLE_TAIL = 1.2;        // ambient-driven tip growth continues this long
                                 // after the strike's own load ends
@@ -115,12 +119,14 @@ export class StoneBreakPlugin implements Plugin {
   private scatter = 0.9;
   // fracture-modes sliders
   private modeCount = 5;
-  private modeRun = 0.16;
+  private tapsToBreak = 6;
 
-  // stress/weibull strike load
+  // stress/weibull strike load (also reused for pottery scuffs)
   private loadPos: [number, number] = [0.5, 0.5];
   private loadUntil = -100;
   private loadAmp = 1;
+  private scuffCycles = 0;   // remaining scuff growth cycles (framerate-independent)
+  private effStrikes = 0;    // effective fault strikes toward tapsToBreak
 
   // fracture-modes reveal state: per-vertex depth on the main line plus
   // per-branch growth, so strikes matter locally
@@ -265,9 +271,9 @@ export class StoneBreakPlugin implements Plugin {
         onChange: (v) => { this.modeCount = v; this.modeKey = ''; },
       });
       this.sliders.addSlider({
-        label: 'Crack Run',
-        min: 0.06, max: 0.5, value: this.modeRun, step: 0.02,
-        onChange: (v) => { this.modeRun = v; },
+        label: 'Taps to Break',
+        min: 2, max: 20, value: this.tapsToBreak, step: 1,
+        onChange: (v) => { this.tapsToBreak = v; },
       });
     }
   }
@@ -349,6 +355,8 @@ export class StoneBreakPlugin implements Plugin {
     this.pendingTaps = [];
     this.loadUntil = -100;
     this.strikesOnSlab = 0;
+    this.scuffCycles = 0;
+    this.effStrikes = 0;
     this.modeKey = ''; // fracture-mode paths are recomputed lazily per slab
   }
 
@@ -411,9 +419,16 @@ export class StoneBreakPlugin implements Plugin {
           // Keep relaxing past the load so ambient-driven tip growth and
           // avalanches settle
           if (time < this.loadUntil + SETTLE_TAIL) this.stepStress(gl, ctx, aspect);
+        } else if (this.scuffCycles > 0) {
+          // Pottery scuffs finish off a small fixed cycle budget — a
+          // framerate-independent restraint on how far they can craze
+          const cycles = Math.min(3, this.scuffCycles);
+          this.scuffCycles -= cycles;
+          this.stepStress(gl, ctx, aspect, cycles, SCUFF_TOUGHNESS, SCUFF_RADIUS);
         }
-        // 'modes' needs no per-frame simulation: strikes stamp directly
-        if (this.frame % 10 === 0 && time - this.lastTapTime < 6) {
+        // The pottery model breaks on a strike count, not on the damage
+        // analysis — scuff damage must never contribute to the break
+        if (this.model !== 'modes' && this.frame % 10 === 0 && time - this.lastTapTime < 6) {
           this.analyseDamage(ctx);
         }
       }
@@ -475,7 +490,38 @@ export class StoneBreakPlugin implements Plugin {
         this.loadUntil = time + LOAD_DURATION;
         this.loadAmp = (this.model === 'weibull' ? 1.4 : 1) + 0.25 * this.stallCount;
       } else if (this.model === 'modes') {
-        this.exciteModePath(gl, x, y, aspect);
+        // What a strike does depends on how close it lands to a fault:
+        // on it → the crack opens fully and counts toward the break;
+        // sort of near → a surface scuff plus a slight opening (partial
+        // credit); a clean miss → scuff only, which NEVER contributes
+        // to breaking the slab.
+        this.ensureModePaths(aspect);
+        const px = x * aspect;
+        let dmin = Infinity;
+        for (const path of this.modePaths) {
+          for (const pt of path.pts) {
+            const d = Math.hypot(pt.x - px, pt.y - y);
+            if (d < dmin) dmin = d;
+          }
+        }
+        if (dmin < NEAR_FAULT) {
+          this.exciteModePath(gl, x, y, aspect, 1);
+          this.effStrikes += 1;
+        } else {
+          // Restrained stress-field crazing; a synchronous burst of
+          // growth cycles makes the scuff form WITH the impact shake,
+          // and the small remaining cycle budget keeps it contained
+          this.loadPos = [x, y];
+          this.loadUntil = time + 0.3;
+          this.loadAmp = 1.15;
+          this.stepStress(gl, ctx, aspect, 6, SCUFF_TOUGHNESS, SCUFF_RADIUS);
+          this.scuffCycles = 10;
+          if (dmin < MID_FAULT) {
+            this.exciteModePath(gl, x, y, aspect, 0.3);
+            this.effStrikes += 0.4;
+          }
+        }
+        this.breakProgress = Math.min(this.effStrikes / this.tapsToBreak, 1);
       }
 
       this.lastTap = [x, y];
@@ -487,6 +533,11 @@ export class StoneBreakPlugin implements Plugin {
         this.burstPos = [x, y];
         this.burstStart = time;
         this.burstStrength = 0.35 + 0.55 * this.breakProgress;
+      }
+      // The pottery slab breaks on the Nth effective fault strike
+      if (this.model === 'modes' && this.effStrikes >= this.tapsToBreak - 1e-6) {
+        this.beginShatter(ctx, time);
+        break;
       }
     }
     this.pendingTaps = [];
@@ -519,13 +570,20 @@ export class StoneBreakPlugin implements Plugin {
 
   // ── Stress Field / Weibull Bonds: relax potential, then grow damage ──
 
-  private stepStress(gl: WebGL2RenderingContext, ctx: EngineContext, aspect: number) {
+  private stepStress(
+    gl: WebGL2RenderingContext,
+    ctx: EngineContext,
+    aspect: number,
+    cycles = GROW_CYCLES,
+    toughnessOverride?: number,
+    growRadius = 0,
+  ) {
     const texelX = 1 / this.crack.width;
     const texelY = 1 / this.crack.height;
     const loadActive = ctx.time < this.loadUntil;
-    const grow = this.model === 'stress' ? this.growStressProgram : this.growWeibullProgram;
+    const grow = this.model === 'weibull' ? this.growWeibullProgram : this.growStressProgram;
 
-    for (let cycle = 0; cycle < GROW_CYCLES; cycle++) {
+    for (let cycle = 0; cycle < cycles; cycle++) {
       gl.useProgram(this.relaxProgram);
       gl.uniform1i(this.uni(gl, this.relaxProgram, 'u_stress'), 0);
       gl.uniform1i(this.uni(gl, this.relaxProgram, 'u_state'), 1);
@@ -549,11 +607,13 @@ export class StoneBreakPlugin implements Plugin {
       gl.uniform2f(this.uni(gl, grow, 'u_texel'), texelX, texelY);
       gl.uniform1f(this.uni(gl, grow, 'u_seed'), this.seeds[0]);
       gl.uniform1f(this.uni(gl, grow, 'u_aspect'), aspect);
-      if (this.model === 'stress') {
+      if (this.model !== 'weibull') {
         // Vary the RNG per growth cycle within the frame too
         gl.uniform1f(this.uni(gl, grow, 'u_time'), ctx.time + cycle * 0.137);
-        gl.uniform1f(this.uni(gl, grow, 'u_toughness'), this.toughness);
+        gl.uniform1f(this.uni(gl, grow, 'u_toughness'), toughnessOverride ?? this.toughness);
         gl.uniform1f(this.uni(gl, grow, 'u_hetero'), this.hetero);
+        gl.uniform2f(this.uni(gl, grow, 'u_growCenter'), this.loadPos[0], this.loadPos[1]);
+        gl.uniform1f(this.uni(gl, grow, 'u_growRadius'), growRadius);
       } else {
         gl.uniform1f(this.uni(gl, grow, 'u_strength'), this.bondStrength);
         gl.uniform1f(this.uni(gl, grow, 'u_scatter'), this.scatter);
@@ -572,7 +632,7 @@ export class StoneBreakPlugin implements Plugin {
 
   // ── Fracture Modes: strikes reveal precomputed weakest paths ─────────
 
-  private exciteModePath(gl: WebGL2RenderingContext, x: number, y: number, aspect: number) {
+  private exciteModePath(gl: WebGL2RenderingContext, x: number, y: number, aspect: number, intensity = 1) {
     this.ensureModePaths(aspect);
     if (this.modePaths.length === 0) return;
 
@@ -594,7 +654,10 @@ export class StoneBreakPlugin implements Plugin {
     const path = this.modePaths[best];
     const rv = this.modeReveal[best];
     const last = path.pts.length - 1;
-    const run = Math.max(2, Math.round(path.pts.length * this.modeRun * (1 + 0.3 * this.stallCount)));
+    // Per-strike growth scales to the taps-to-break budget, so the crack
+    // looks fully developed right around the configured strike count
+    const runFrac = 1.4 / this.tapsToBreak;
+    const run = Math.max(2, Math.round(path.pts.length * runFrac * intensity));
     if (rv.lo < 0) {
       rv.lo = Math.max(0, bestIdx - run);
       rv.hi = Math.min(last, bestIdx + run);
@@ -609,8 +672,9 @@ export class StoneBreakPlugin implements Plugin {
     // projects onto the crack, so hammering one spot darkens and widens
     // the crack there rather than everywhere
     const SIG = 16; // bump half-width, fine-vertex indices
+    const bumpA = (4.2 / this.tapsToBreak) * intensity;
     for (let i = rv.lo; i <= rv.hi; i++) {
-      const bump = 1.15 * Math.exp(-(((i - bestIdx) / SIG) ** 2));
+      const bump = bumpA * Math.exp(-(((i - bestIdx) / SIG) ** 2));
       rv.depthAt[i] = Math.min(6.5, Math.max(rv.depthAt[i], 2.4) + bump);
     }
 
@@ -621,8 +685,11 @@ export class StoneBreakPlugin implements Plugin {
       const root = br.pts[0];
       const d = Math.hypot(root.x - px, root.y - y);
       const w = Math.exp(-((d / 0.16) ** 2));
-      rv.brSteps[bi] = Math.min(br.pts.length - 1, rv.brSteps[bi] + (w > 0.05 ? 1 + Math.round(3.5 * w) : 0.35));
-      rv.brDepth[bi] = Math.min(4.5, rv.brDepth[bi] + 0.25 + 1.2 * w);
+      rv.brSteps[bi] = Math.min(
+        br.pts.length - 1,
+        rv.brSteps[bi] + (w > 0.05 ? intensity * (1 + Math.round(3.5 * w)) : 0.35 * intensity),
+      );
+      rv.brDepth[bi] = Math.min(4.5, rv.brDepth[bi] + (0.25 + 1.2 * w) * intensity);
     });
 
     this.stampReveal(gl, path, rv, aspect);

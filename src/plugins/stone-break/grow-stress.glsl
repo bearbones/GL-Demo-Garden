@@ -22,6 +22,8 @@ uniform float u_aspect;
 uniform float u_time;
 uniform float u_toughness;  // base drive threshold (slider)
 uniform float u_hetero;     // toughness heterogeneity amplitude (slider)
+uniform vec2 u_growCenter;  // with u_growRadius: confine growth to a disk
+uniform float u_growRadius; // 0 = grow anywhere (full stress model)
 
 const float BITE = 2.0;     // damage when a texel yields — fully grounds the
                             // potential so failures chain into filaments
@@ -37,6 +39,15 @@ void main() {
   if (v_uv.x < margin.x || v_uv.x > 1.0 - margin.x || v_uv.y < margin.y || v_uv.y > 1.0 - margin.y) {
     fragColor = st;
     return;
+  }
+  // Scuff mode: growth is confined to the strike's neighbourhood so the
+  // ambient field can't craze along distant cracks
+  if (u_growRadius > 0.0) {
+    vec2 dc = (v_uv - u_growCenter) * vec2(u_aspect, 1.0);
+    if (dot(dc, dc) > u_growRadius * u_growRadius) {
+      fragColor = st;
+      return;
+    }
   }
   float e = texture(u_stress, clamp(v_uv + vec2(u_texel.x, 0.0), lo, hi)).r;
   float w = texture(u_stress, clamp(v_uv - vec2(u_texel.x, 0.0), lo, hi)).r;
