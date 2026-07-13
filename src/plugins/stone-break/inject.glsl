@@ -1,0 +1,46 @@
+#version 300 es
+precision highp float;
+
+#include "../../shaders/lib/noise.glsl"
+
+// Splats fracture energy into the damage field at the tap point, stamps a
+// small impact crater, and scores a handful of short radial spokes so every
+// strike spiderwebs immediately (the compute passes then extend the web
+// outward along the rock's fault lines).
+
+in vec2 v_uv;
+out vec4 fragColor;
+
+uniform sampler2D u_state;
+uniform vec2 u_center;      // tap position, state UV space (origin bottom-left)
+uniform float u_energy;
+uniform float u_radius;     // energy splat radius, in units of frame height
+uniform float u_aspect;
+uniform float u_spokeRot;   // random rotation per tap
+uniform float u_spokeCount;
+uniform float u_spokeLen;   // spoke reach, in units of frame height
+
+void main() {
+  vec4 s = texture(u_state, v_uv);
+  vec2 d = (v_uv - u_center) * vec2(u_aspect, 1.0);
+  float r = length(d);
+
+  float fall = exp(-r * r / (u_radius * u_radius));
+  float e = s.g + u_energy * fall;
+
+  float crater = fall * fall;
+  crater *= crater;
+  crater *= crater; // fall^8 — a small pockmark, not a wide disc
+  float depth = s.r + 0.35 * crater;
+
+  // Radial spokes: sharp angular ridges, broken up along their length
+  float theta = atan(d.y, d.x);
+  float spoke = pow(0.5 + 0.5 * cos(theta * u_spokeCount + u_spokeRot), 30.0);
+  spoke *= smoothstep(u_spokeLen, u_spokeLen * 0.2, r);
+  spoke *= 0.55 + 0.65 * snoise(vec2(theta * 3.0 + u_spokeRot * 5.0, r * 40.0));
+  spoke = max(spoke, 0.0);
+  depth += 1.3 * spoke;
+  e += u_energy * 0.4 * spoke;
+
+  fragColor = vec4(depth, e, 0.0, 1.0);
+}

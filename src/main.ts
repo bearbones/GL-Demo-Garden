@@ -7,6 +7,7 @@ import { RippleDropPlugin } from './plugins/ripple-drop';
 import { LaserBirdPlugin } from './plugins/laser-bird';
 import { SeaMeltPlugin } from './plugins/sea-melt';
 import { GlassWaterPlugin } from './plugins/glass-water';
+import { StoneBreakPlugin } from './plugins/stone-break';
 
 const PLUGINS: Record<string, () => Plugin> = {
   'wobbly-cells': () => new WobbyCellsPlugin(),
@@ -16,6 +17,7 @@ const PLUGINS: Record<string, () => Plugin> = {
   'laser-bird': () => new LaserBirdPlugin(),
   'sea-melt': () => new SeaMeltPlugin(),
   'glass-water': () => new GlassWaterPlugin(),
+  'stone-break': () => new StoneBreakPlugin(),
 };
 
 const DEFAULT_ID = 'wobbly-cells';
