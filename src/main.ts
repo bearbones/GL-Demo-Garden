@@ -7,6 +7,7 @@ import { RippleDropPlugin } from './plugins/ripple-drop';
 import { LaserBirdPlugin } from './plugins/laser-bird';
 import { SeaMeltPlugin } from './plugins/sea-melt';
 import { GlassWaterPlugin } from './plugins/glass-water';
+import { StoneBreakPlugin } from './plugins/stone-break';
 
 const PLUGINS: Record<string, () => Plugin> = {
   'wobbly-cells': () => new WobbyCellsPlugin(),
@@ -16,33 +17,45 @@ const PLUGINS: Record<string, () => Plugin> = {
   'laser-bird': () => new LaserBirdPlugin(),
   'sea-melt': () => new SeaMeltPlugin(),
   'glass-water': () => new GlassWaterPlugin(),
+  'stone-break': () => new StoneBreakPlugin(),
 };
 
-const engine = new Engine();
+const DEFAULT_ID = 'wobbly-cells';
+
+const stage = document.getElementById('stage')!;
+const engine = new Engine(stage);
+
+// Top-bar dropdown demo switcher (the <select> lives outside the render canvas)
+const select = document.getElementById('demo-select') as HTMLSelectElement;
+
+for (const id of Object.keys(PLUGINS)) {
+  const option = document.createElement('option');
+  option.value = id;
+  option.textContent = id
+    .split('-')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+  select.appendChild(option);
+}
+
+select.addEventListener('change', () => {
+  location.hash = select.value;
+});
+
+let currentId: string | null = null;
 
 function loadFromHash() {
-  const id = location.hash.slice(1) || 'wobbly-cells';
-  const factory = PLUGINS[id];
-  if (factory) engine.loadPlugin(factory());
+  const raw = location.hash.slice(1);
+  // hasOwnProperty guards against inherited keys (#__proto__, #constructor);
+  // an unknown hash keeps the running demo instead of resetting it
+  const id = Object.prototype.hasOwnProperty.call(PLUGINS, raw)
+    ? raw
+    : currentId ?? DEFAULT_ID;
+  select.value = id;
+  if (id === currentId) return;
+  currentId = id;
+  engine.loadPlugin(PLUGINS[id]());
 }
 
 window.addEventListener('hashchange', loadFromHash);
 loadFromHash();
-
-// Simple nav overlay
-const nav = document.createElement('nav');
-nav.style.cssText =
-  'position:fixed;top:0;left:0;padding:12px 16px;z-index:10;display:flex;gap:16px;font-family:system-ui,sans-serif;font-size:14px;';
-
-for (const id of Object.keys(PLUGINS)) {
-  const a = document.createElement('a');
-  a.href = `#${id}`;
-  a.textContent = id.replace(/-/g, ' ');
-  a.style.cssText =
-    'color:#fff;text-decoration:none;text-shadow:0 1px 3px rgba(0,0,0,0.8);text-transform:capitalize;opacity:0.7;transition:opacity 0.2s;';
-  a.addEventListener('mouseenter', () => (a.style.opacity = '1'));
-  a.addEventListener('mouseleave', () => (a.style.opacity = '0.7'));
-  nav.appendChild(a);
-}
-
-document.body.appendChild(nav);

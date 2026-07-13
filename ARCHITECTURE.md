@@ -103,7 +103,7 @@ Vertices 0/1/2 produce UVs (0,0), (2,0), (0,2) — a single triangle that over-c
 
 ### Pattern B — Ping-Pong Compute
 
-Used by: **Turing Patterns**, **Laser Bird** (for bloom blur).
+Used by: **Turing Patterns**, **Laser Bird** (for bloom blur), **Stone Break** (crack propagation).
 
 `src/plugin/PingPongFBO.ts` maintains two `RGBA16F` framebuffers (half-float, requiring `EXT_color_buffer_float`). Each frame:
 
@@ -271,6 +271,29 @@ Three render passes:
 1. **Scene pass** → FBO A: the creature as an SDF, shaded as pure light. The bird is built from tapered-thickness quadratic beziers (`sdBezier`, which returns the curve parameter of the closest point so ribbon strokes can taper to the wing tip): two up-swept crescent wings with a carved underside, a slim body with head nub, and a thin swaying beam-tail trailing to the source. A **Form slider morphs the SDF continuously between the bird and a swallowtail butterfly** (the original demo's shape, preserved) — SDFs interpolate cleanly, so mid-morph states stay coherent light-shapes. The interior white ramp is depth-normalized per form so the thick-winged butterfly doesn't white out. Edges waver and brightness flickers on a quantized boil clock (8 Hz), like hand-airbrushed cels repainted frame to frame.
 2. **Blur pass** → FBO B: multi-pass separable Gaussian blur at half resolution, with the kernel normalized to unity (the raw 15-tap weights sum to ~0.803; unnormalized, each pass dims the bloom ~20% and seven passes lose ~80% of the glow energy).
 3. **Composite pass** → screen: starfield sky + scene + bloom, with the wide fringe shifted toward warm red to mimic 80s multi-exposure color temperature drift. Chunky glowing **petals** (rotated squashed-ellipse blobs, like the rose petals swirling in the reference) orbit and rise around the creature, tumbling as they drift and flickering on the boil clock.
+
+### Stone Break (Fracture Propagation)
+
+A slab of procedurally generated rock fills the canvas. Tapping strikes it: cracks spiderweb out from the strike point, repeated taps deepen and extend the network, and once the cracks run deep and reach most of the way across the screen the slab shatters along them and the pieces fall away, revealing a fresh slab.
+
+**Rock slabs** are baked once per rock (never per frame) from a seeded shader into an RGBA8 texture. Three pattern families — speckled igneous, banded sedimentary, veined crystalline — each with three palettes, give nine mineral looks chosen by hashing the seed. Two slabs exist at any time: the current one and the one revealed on shatter.
+
+**Crack propagation** is a ping-pong compute field at half resolution (R = crack depth, G = live fracture energy). A tap splats energy plus a few noise-broken radial spokes of immediate damage. Each compute step (6/frame), every pixel takes the strongest energy in its 8-neighbourhood minus a travel cost derived from two F2−F1 cellular (Voronoi-edge) distance fields, whose zero sets are straight segments meeting at sharp junctions:
+
+- **Primary faults**: huge cells, so the borders form long lines reaching across the screen. The lookup space is domain-warped by a random offset field with *linear* (deliberately unsmoothed) bilinear interpolation on a rotated grid: the warp is continuous — so the fault line never tears or shears sideways — but its gradient jumps at every grid cell, kinking the line's heading every ~50 px. That is the jittery-angular geometry of a real sidewalk crack. Depth here is uncapped; these are the cracks that deepen, widen, ember, and finally split the slab.
+
+  Four sliders expose the fault geometry. **Kink Angle** sets the heading jitter per kink (warp amplitude is normalized by frequency — `tan(angle)/freq` — so the two controls don't interact) and **Kink Freq** sets how often the line kinks. **Branch Angle** applies an anisotropic squash to the Voronoi lookup space along a per-slab axis: isotropic cells give the classic ~120° Y-junctions, while elongated cells make side branches leave the through-line at acuter angles. **Branch Freq** is the cell density, i.e. how far a crack runs between junctions.
+- **Web**: a fine field whose valleys carry a cost floor, so tap energy only floods it for a short radius — thin spiderweb crackle around the strike point. Web depth saturates below every threshold that matters (deep-crack analysis, ember, light shafts, conduction), so repeated strikes can't chew the web into a hole.
+
+Damage is only recorded along fault valleys — solid rock conducts energy near the impact but doesn't scar, keeping cracks as lines instead of blobs. Strike-local damage (crater + spokes) saturates at a fixed cap for the same reason.
+
+Repeat taps grow the long cracks rather than the crackle, via two conduction rules keyed to a depth only primary cracks and spokes exceed: deep cracks cost ~10× less to traverse, and — the important one — they nearly eliminate the per-step energy decay (0.995 vs 0.972 in rock). Rock decay caps how far one tap can grow a fresh crack, while conduits deliver the next tap's energy to the far tips almost intact, so every strike on a cracked slab visibly lengthens and branches the existing network. If a strike lands far from any fault and progress stalls, tap energy escalates ("working the stone") until it couples.
+
+**Break detection** runs every 10 frames while energy is live: a 64×40 analysis pass supersamples the crack field (6×6 per cell — cracks are thin, point sampling would miss them) and is read back with `readPixels`. The CPU computes deep-crack coverage, max depth, and the bounding-box span of the cracked region. The slab breaks only when the network spans ~85% of the screen in some axis *and* enough of it runs deep; the min of those scores is `breakProgress`.
+
+**Near the break point** (`breakProgress` > 0.6), each tap fires a half-second burst of light shafts: the display shader marches from every pixel toward the strike, accumulating emission from deep cracks along the ray — god rays anchored to the actual crack shapes — while camera shake (a decaying UV offset of summed sines) scales up with `breakProgress`. Crossing the threshold fires one violent burst, then after a 0.4 s beat the slab shatters.
+
+**Shatter** splits the screen into 12 jittered-Voronoi pieces. Seeds are nudged toward the *least-cracked* analysis cells nearby, which pulls Voronoi boundaries onto the crack seams (boundaries fall midway between seeds). Each piece is a rigid body on the CPU — radial impulse from the strike, gravity, spin — and the display shader inverse-transforms each pixel per piece to decide membership and sample the old slab (crack scars included), revealing the fresh slab behind. After the fall the textures swap, a new "next" slab is baked, and the crack field is cleared.
 
 ### Boat Wake (Kelvin Wake + Foam Advection)
 
