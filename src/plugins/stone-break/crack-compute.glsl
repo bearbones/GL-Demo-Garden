@@ -72,11 +72,11 @@ void rockFields(vec2 uv, out float primary, out float web) {
   vec2 p = vec2(uv.x * u_aspect, uv.y);
   // Smooth wander + per-cell offset kinks; the offsets stay smaller than
   // the fault valley width so the displaced line segments still connect
-  vec2 wander = 0.018 * vec2(snoise(p * 2.5 + u_seed), snoise(p * 2.5 + u_seed + 17.3));
+  vec2 wander = 0.006 * vec2(snoise(p * 2.5 + u_seed), snoise(p * 2.5 + u_seed + 17.3));
   // Kink grid is rotated so its discontinuity seams never read as
   // axis-aligned lines in the crack pattern
   vec2 pr = mat2(0.891, 0.454, -0.454, 0.891) * p;
-  vec2 kink = 0.03 * (hash22(floor(pr * 11.0) + u_seed + 3.7) - 0.5);
+  vec2 kink = 0.017 * (hash22(floor(pr * 13.0) + u_seed + 3.7) - 0.5);
   primary = voroEdge((p + wander + kink) * 2.2 + u_seed * 7.0) * 1.4;
   web = voroEdge(p * 8.0 + u_seed * 3.0) * 2.6 + WEB_TAX;
 }
@@ -109,8 +109,8 @@ void main() {
   float e = max(s.g, best - cost) * mix(DECAY, DECAY_CONDUIT, conduit);
   if (e < CUTOFF) e = 0.0;
 
-  float valleyP = smoothstep(0.05, 0.015, primary);
-  float valleyW = smoothstep(0.04, 0.015, web);
+  float valleyP = smoothstep(0.035, 0.012, primary);
+  float valleyW = smoothstep(0.03, 0.012, web);
   float deposit = e * DEPTH_RATE * valleyP
                 + e * DEPTH_RATE * 0.9 * valleyW * (1.0 - smoothstep(WEB_CAP - 0.2, WEB_CAP, s.r));
   float d = s.r + deposit;
