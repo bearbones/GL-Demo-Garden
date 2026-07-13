@@ -2,6 +2,7 @@ import { Plugin } from '../../plugin/Plugin';
 import { PingPongFBO } from '../../plugin/PingPongFBO';
 import { EngineContext, GestureEvent } from '../../engine/types';
 import { createProgram } from '../../engine/gl-utils';
+import { ParamSlider } from '../../engine/ParamSlider';
 import quadVert from '../../shaders/fullscreen-quad.vert';
 import rockSrc from './rock.glsl';
 import injectSrc from './inject.glsl';
@@ -66,6 +67,12 @@ export class StoneBreakPlugin implements Plugin {
   private shakeAmp = 0;
   private stallCount = 0;
   private progressAtLastTap = 0;
+
+  private sliders!: ParamSlider;
+  private kinkAngle = 16;   // degrees of heading jitter per kink
+  private kinkFreq = 13;    // kinks per unit of frame height
+  private branchAngle = 110; // typical junction angle, degrees
+  private branchFreq = 2.2; // primary fault cells per unit of frame height
   private burstStart = -100;
   private burstPos: [number, number] = [0.5, 0.5];
   private burstStrength = 0;
@@ -101,6 +108,28 @@ export class StoneBreakPlugin implements Plugin {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.analysisFBO);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.analysisTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    this.sliders = new ParamSlider();
+    this.sliders.addSlider({
+      label: 'Kink Angle',
+      min: 0, max: 35, value: this.kinkAngle, step: 1,
+      onChange: (v) => { this.kinkAngle = v; },
+    });
+    this.sliders.addSlider({
+      label: 'Kink Freq',
+      min: 4, max: 26, value: this.kinkFreq, step: 1,
+      onChange: (v) => { this.kinkFreq = v; },
+    });
+    this.sliders.addSlider({
+      label: 'Branch Angle',
+      min: 55, max: 120, value: this.branchAngle, step: 1,
+      onChange: (v) => { this.branchAngle = v; },
+    });
+    this.sliders.addSlider({
+      label: 'Branch Freq',
+      min: 1.2, max: 4.5, value: this.branchFreq, step: 0.1,
+      onChange: (v) => { this.branchFreq = v; },
+    });
   }
 
   private uni(gl: WebGL2RenderingContext, program: WebGLProgram, name: string) {
@@ -236,6 +265,14 @@ export class StoneBreakPlugin implements Plugin {
     gl.uniform2f(this.uni(gl, this.computeProgram, 'u_texel'), 1 / this.crack.width, 1 / this.crack.height);
     gl.uniform1f(this.uni(gl, this.computeProgram, 'u_seed'), this.seeds[0]);
     gl.uniform1f(this.uni(gl, this.computeProgram, 'u_aspect'), aspect);
+    // Normalize warp amplitude by frequency so Kink Angle sets the actual
+    // heading change per kink, independent of how often kinks occur
+    const kinkAmp = Math.tan((this.kinkAngle * Math.PI) / 180) / this.kinkFreq;
+    gl.uniform1f(this.uni(gl, this.computeProgram, 'u_kinkAmp'), kinkAmp);
+    gl.uniform1f(this.uni(gl, this.computeProgram, 'u_kinkFreq'), this.kinkFreq);
+    gl.uniform1f(this.uni(gl, this.computeProgram, 'u_branchScale'), this.branchFreq);
+    gl.uniform1f(this.uni(gl, this.computeProgram, 'u_branchSquash'), Math.min(120 / this.branchAngle, 2.4));
+    gl.uniform1f(this.uni(gl, this.computeProgram, 'u_squashAngle'), (this.seeds[0] % 1) * Math.PI);
     for (let i = 0; i < COMPUTE_STEPS; i++) {
       this.crack.bindRead(gl, 0);
       this.crack.bindWrite(gl);
@@ -442,5 +479,6 @@ export class StoneBreakPlugin implements Plugin {
     gl.deleteTexture(this.rockTex[0]);
     gl.deleteTexture(this.rockTex[1]);
     this.crack.destroy(gl);
+    this.sliders.destroy();
   }
 }

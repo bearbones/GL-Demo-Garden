@@ -12,7 +12,7 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 | **Ripple Drop** | Hand-inked rain ripples (Windaria 1986 style) | Tap for rings (sometimes a spiral); drag to dot a trail; Rain slider for ambient drops |
 | **Laser Bird** | 80s anime light-being with multi-pass bloom | Tap/drag to move; Form slider morphs bird ↔ swallowtail butterfly |
 | **Boat Wake** | Kelvin wake foam advection | Passive; foam trails behind boat |
-| **Stone Break** | Procedural rock fracture via iterative energy-propagation compute | Tap to crack; repeated taps deepen, spiderweb, and extend the network until the slab shatters and falls away |
+| **Stone Break** | Procedural rock fracture via iterative energy-propagation compute | Tap to crack; repeated taps deepen, spiderweb, and extend the network until the slab shatters and falls away. Sliders tune kink angle/frequency and branch angle/frequency |
 
 Navigate between demos using the dropdown in the top bar, or by setting the URL hash directly:
 

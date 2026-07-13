@@ -35,6 +35,12 @@ uniform sampler2D u_state;
 uniform vec2 u_texel;
 uniform float u_seed;
 uniform float u_aspect;
+uniform float u_kinkAmp;      // forward-march jitter: warp amplitude
+uniform float u_kinkFreq;     // forward-march jitter: kinks per unit height
+uniform float u_branchScale;  // branch frequency: primary fault cell density
+uniform float u_branchSquash; // branch angle: 1 = isotropic (~120° junctions),
+                              // higher = elongated cells → acuter branching
+uniform float u_squashAngle;  // per-slab anisotropy axis
 
 const float BASE_COST = 0.008;     // travel cost along a perfect fault line
 const float STRENGTH_COST = 1.6;   // extra cost through solid rock
@@ -87,8 +93,15 @@ void rockFields(vec2 uv, out float primary, out float web) {
   // screen axes; the warp itself is continuous (see kinkField), so the
   // fault kinks ~every cell without shear discontinuities
   vec2 pr = mat2(0.891, 0.454, -0.454, 0.891) * p;
-  vec2 pw = p + 0.035 * kinkField(pr * 13.0);
-  primary = voroEdge(pw * 2.2 + u_seed * 7.0) * 1.4;
+  vec2 pw = p + u_kinkAmp * kinkField(pr * u_kinkFreq);
+  // Anisotropic lookup space sets the branching angle: squashing along
+  // the slab's grain elongates cells, so side branches leave the
+  // through-line at acuter angles than the isotropic ~120°
+  float cs = cos(u_squashAngle);
+  float sn = sin(u_squashAngle);
+  vec2 ps = mat2(cs, sn, -sn, cs) * pw;
+  ps.y *= u_branchSquash;
+  primary = voroEdge(ps * u_branchScale + u_seed * 7.0) * 1.4;
   web = voroEdge(p * 8.0 + u_seed * 3.0) * 2.6 + WEB_TAX;
 }
 
