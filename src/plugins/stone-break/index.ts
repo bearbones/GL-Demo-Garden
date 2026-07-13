@@ -122,9 +122,16 @@ export class StoneBreakPlugin implements Plugin {
   private loadUntil = -100;
   private loadAmp = 1;
 
-  // fracture-modes reveal state
+  // fracture-modes reveal state: per-vertex depth on the main line plus
+  // per-branch growth, so strikes matter locally
   private modePaths: ModePath[] = [];
-  private modeReveal: { lo: number; hi: number; depth: number }[] = [];
+  private modeReveal: {
+    lo: number;
+    hi: number;
+    depthAt: Float32Array;   // main-line depth per fine vertex
+    brSteps: Float32Array;   // revealed steps per branch
+    brDepth: Float32Array;   // depth per branch
+  }[] = [];
   private modeKey = '';
 
   private burstStart = -100;
@@ -350,7 +357,13 @@ export class StoneBreakPlugin implements Plugin {
     if (key === this.modeKey) return;
     this.modeKey = key;
     this.modePaths = computeFractureModes(this.seeds[0], aspect, this.modeCount);
-    this.modeReveal = this.modePaths.map(() => ({ lo: -1, hi: -1, depth: 2.8 }));
+    this.modeReveal = this.modePaths.map((p) => ({
+      lo: -1,
+      hi: -1,
+      depthAt: new Float32Array(p.pts.length),
+      brSteps: new Float32Array(p.branches.length),
+      brDepth: new Float32Array(p.branches.length),
+    }));
   }
 
   resize(ctx: EngineContext) {
@@ -586,19 +599,39 @@ export class StoneBreakPlugin implements Plugin {
       rv.lo = Math.max(0, bestIdx - run);
       rv.hi = Math.min(last, bestIdx + run);
     } else {
-      // Re-striking a revealed crack deepens it and runs it further
-      // along its predestined line in both directions
-      rv.depth = Math.min(rv.depth + 0.7, 6.5);
+      // Re-striking a revealed crack runs it further along its
+      // predestined line in both directions
       rv.lo = Math.max(0, rv.lo - run);
       rv.hi = Math.min(last, rv.hi + run);
     }
+
+    // The strike deepens the line LOCALLY: a bump centred where the tap
+    // projects onto the crack, so hammering one spot darkens and widens
+    // the crack there rather than everywhere
+    const SIG = 16; // bump half-width, fine-vertex indices
+    for (let i = rv.lo; i <= rv.hi; i++) {
+      const bump = 1.15 * Math.exp(-(((i - bestIdx) / SIG) ** 2));
+      rv.depthAt[i] = Math.min(6.5, Math.max(rv.depthAt[i], 2.4) + bump);
+    }
+
+    // Branches grow with proximity to the strike: the thicket sprouts
+    // around where you hammer, distant branches barely creep
+    path.branches.forEach((br, bi) => {
+      if (br.anchorIdx < rv.lo || br.anchorIdx > rv.hi) return;
+      const root = br.pts[0];
+      const d = Math.hypot(root.x - px, root.y - y);
+      const w = Math.exp(-((d / 0.16) ** 2));
+      rv.brSteps[bi] = Math.min(br.pts.length - 1, rv.brSteps[bi] + (w > 0.05 ? 1 + Math.round(3.5 * w) : 0.35));
+      rv.brDepth[bi] = Math.min(4.5, rv.brDepth[bi] + 0.25 + 1.2 * w);
+    });
+
     this.stampReveal(gl, path, rv, aspect);
   }
 
   private stampReveal(
     gl: WebGL2RenderingContext,
     path: ModePath,
-    rv: { lo: number; hi: number; depth: number },
+    rv: { lo: number; hi: number; depthAt: Float32Array; brSteps: Float32Array; brDepth: Float32Array },
     aspect: number,
   ) {
     const segs: number[] = [];
@@ -607,29 +640,33 @@ export class StoneBreakPlugin implements Plugin {
       const a = path.pts[i];
       const b = path.pts[i + 1];
       segs.push(a.x, a.y, b.x, b.y);
+      let dep = Math.max(rv.depthAt[i], rv.depthAt[i + 1]);
       // Taper toward the ends of the revealed interval (unless the
       // interval has reached the slab edge)
       const fromEnd = Math.min(i - rv.lo, rv.hi - 1 - i);
       const atEdge = (i - rv.lo < 4 && rv.lo === 0) || (rv.hi - 1 - i < 4 && rv.hi === path.pts.length - 1);
-      depths.push(rv.depth * (atEdge || fromEnd >= 4 ? 1 : 0.5 + 0.125 * fromEnd));
+      if (!atEdge && fromEnd < 4) dep *= 0.5 + 0.125 * fromEnd;
+      depths.push(dep);
     }
-    // Side branches whose anchor falls in the revealed interval come
-    // along, shallower than the main line and tapering to their tips
-    for (const br of path.branches) {
-      if (br.anchor < rv.lo || br.anchor > rv.hi) continue;
-      for (let i = 0; i + 1 < br.pts.length; i++) {
+    // Branches: only their grown portion, shallower with nesting level,
+    // tapering to the tip
+    path.branches.forEach((br, bi) => {
+      const steps = Math.floor(rv.brSteps[bi]);
+      if (steps < 1 || rv.brDepth[bi] < 0.4) return;
+      if (br.anchorIdx < rv.lo || br.anchorIdx > rv.hi) return;
+      const lvl = 1 - 0.18 * (br.level - 1);
+      for (let i = 0; i < steps && i + 1 < br.pts.length; i++) {
         const a = br.pts[i];
         const b = br.pts[i + 1];
         segs.push(a.x, a.y, b.x, b.y);
-        const t = 1 - i / (br.pts.length - 1);
-        depths.push(rv.depth * (0.3 + 0.3 * t));
+        const t = 1 - i / Math.max(steps, 1);
+        depths.push(rv.brDepth[bi] * lvl * (0.45 + 0.55 * t));
       }
-    }
+    });
 
     gl.useProgram(this.stampProgram);
     gl.uniform1i(this.uni(gl, this.stampProgram, 'u_state'), 0);
-    // Re-struck cracks widen as they deepen, like a joint being worked open
-    gl.uniform1f(this.uni(gl, this.stampProgram, 'u_width'), 0.006 + 0.0012 * (rv.depth - 2.8));
+    gl.uniform1f(this.uni(gl, this.stampProgram, 'u_width'), 0.0065);
     gl.uniform1f(this.uni(gl, this.stampProgram, 'u_aspect'), aspect);
     for (let off = 0; off < segs.length / 4; off += MAX_SEGS) {
       const count = Math.min(MAX_SEGS, segs.length / 4 - off);
@@ -721,15 +758,22 @@ export class StoneBreakPlugin implements Plugin {
     if (this.model === 'modes' && this.modePaths.length > 0) {
       // The final failure: every struck crack SNAPS — its reveal
       // completes through the whole slab during the burst beat — and the
-      // pieces are exactly the regions those cracks enclose
-      const revealed = this.modePaths.map((path, k) => {
+      // pieces are exactly the regions those cracks enclose. An arrested
+      // crack terminates on an older fault, so completing it drags that
+      // parent fault (and its parents) into the failure too — otherwise
+      // a crack ending mid-slab couldn't cut a piece free.
+      const revealed = this.modePaths.map((_, k) => this.modeReveal[k].lo >= 0);
+      for (let k = this.modePaths.length - 1; k >= 0; k--) {
+        const parent = this.modePaths[k].arrestParent;
+        if (revealed[k] && parent >= 0) revealed[parent] = true;
+      }
+      this.modePaths.forEach((path, k) => {
+        if (!revealed[k]) return;
         const rv = this.modeReveal[k];
-        if (rv.lo < 0) return false;
         rv.lo = 0;
         rv.hi = path.pts.length - 1;
-        rv.depth = Math.max(rv.depth, 4.5);
+        for (let i = 0; i < rv.depthAt.length; i++) rv.depthAt[i] = Math.max(rv.depthAt[i], 4.5);
         this.stampReveal(ctx.gl, path, rv, aspect);
-        return true;
       });
       const map = buildRegionMap(this.modePaths, revealed, aspect, NP);
       if (map.count >= 2) {

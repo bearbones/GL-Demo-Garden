@@ -6,11 +6,21 @@
 // modes stay distinct. Strikes at runtime merely REVEAL these paths;
 // the slab's fault lines exist before the first tap ever lands.
 
+export interface ModeBranch {
+  /** Index on the main fine polyline this branch (or its ancestor) roots at. */
+  anchorIdx: number;
+  /** Absolute polyline; pts[0] is the root point. */
+  pts: { x: number; y: number }[];
+  /** 1 = off the main line, 2+ = nested off another branch. */
+  level: number;
+}
+
 export interface ModePath {
   /** Fine polyline vertices in aspect-corrected UV space (x in [0, aspect], y in [0, 1]). */
   pts: { x: number; y: number }[];
-  /** Short side-branches, each anchored at an index into pts. */
-  branches: { anchor: number; pts: { x: number; y: number }[] }[];
+  branches: ModeBranch[];
+  /** Index of the older path this one arrests on (T-junction), or -1. */
+  arrestParent: number;
 }
 
 // Deterministic PRNG so a slab's modes are reproducible from its seed
@@ -155,22 +165,8 @@ export function computeFractureModes(seed: number, aspect: number, count: number
     }
     if (nodes.length < 4) continue;
 
-    // Penalize reuse so the next mode finds a different way across
-    for (const n of nodes) {
-      const nx = n % gw;
-      const ny = (n / gw) | 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const mx = nx + dx;
-          const my = ny + dy;
-          if (mx < 0 || mx >= gw || my < 0 || my >= gh) continue;
-          tough[my * gw + mx] *= 2.5;
-        }
-      }
-    }
-
     // Every 2nd node keeps the natural wander without excess segments
-    const pts: { x: number; y: number }[] = [];
+    let pts: { x: number; y: number }[] = [];
     for (let i = 0; i < nodes.length; i += 2) {
       const n = nodes[i];
       pts.push({ x: ((n % gw) / (gw - 1)) * aspect, y: ((n / gw) | 0) / (gh - 1) });
@@ -178,12 +174,53 @@ export function computeFractureModes(seed: number, aspect: number, count: number
     const lastNode = nodes[nodes.length - 1];
     pts.push({ x: ((lastNode % gw) / (gw - 1)) * aspect, y: ((lastNode / gw) | 0) / (gh - 1) });
 
+    // Crack arrest: a later crack terminates the moment it meets an older
+    // one, ending in a T-junction — bridged exactly onto the older
+    // crack's displaced polyline so the junction closes visually and the
+    // region map partitions correctly.
+    let arrested = false;
+    let arrestParent = -1;
+    outer: for (let i = 2; i < pts.length; i++) {
+      for (let pj = 0; pj < paths.length; pj++) {
+        for (const q of paths[pj].pts) {
+          const dx = pts[i].x - q.x;
+          const dy = pts[i].y - q.y;
+          if (dx * dx + dy * dy < 0.024 * 0.024) {
+            pts = pts.slice(0, i);
+            pts.push({ x: q.x, y: q.y });
+            arrested = true;
+            arrestParent = pj;
+            break outer;
+          }
+        }
+      }
+    }
+    if (pts.length < 5) continue; // arrested almost immediately — no crack
+
+    // Penalize reuse (only along the kept portion) so the next mode finds
+    // a different way across
+    const keptNodes = arrested ? Math.min(nodes.length, pts.length * 2) : nodes.length;
+    for (let ni = 0; ni < keptNodes; ni++) {
+      const n = nodes[ni];
+      const nx = n % gw;
+      const ny = (n / gw) | 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const mx = nx + dx;
+          const my = ny + dy;
+          if (mx < 0 || mx >= gw || my < 0 || my >= gh) continue;
+          tough[my * gw + mx] *= 4.0;
+        }
+      }
+    }
+
     // The Dijkstra path is the reference line; a Brownian-bridge midpoint
-    // displacement around it gives the lightning-like crackle, and short
-    // Brownian-walk offshoots give the branching. Both use the same
-    // seeded PRNG, so re-striking a path restamps the identical geometry.
+    // displacement around it gives the lightning-like crackle (endpoints
+    // stay fixed, so an arrested end still lands ON the older crack), and
+    // recursive Brownian-walk offshoots give the branching. All use the
+    // same seeded PRNG, so re-striking a path restamps identical geometry.
     const fine = midpointDisplace(pts, rand);
-    paths.push({ pts: fine, branches: makeBranches(fine, rand) });
+    paths.push({ pts: fine, branches: makeBranches(fine, rand), arrestParent });
   }
   return paths;
 }
@@ -332,29 +369,47 @@ function midpointDisplace(pts: { x: number; y: number }[], rand: () => number) {
   return cur;
 }
 
-// Short jittery offshoots leaving the main line at acute angles, like
-// lightning leaders that didn't win
+// Recursive offshoots. Real crack branches leave their parent at acute,
+// forward-biased angles (15–35°) and arc gently away, and major branches
+// carry sub-branches of their own — so branching nests two or three
+// levels deep, thinning as it goes.
 function makeBranches(fine: { x: number; y: number }[], rand: () => number) {
-  const branches: { anchor: number; pts: { x: number; y: number }[] }[] = [];
-  const STEP = 0.022; // branch step length, uv-height units
-  for (let i = 4; i < fine.length - 4; i += 3 + Math.floor(rand() * 4)) {
-    if (rand() > 0.55) continue;
-    const dx = fine[i + 1].x - fine[i - 1].x;
-    const dy = fine[i + 1].y - fine[i - 1].y;
-    const base = Math.atan2(dy, dx);
-    const side = rand() < 0.5 ? 1 : -1;
-    let ang = base + side * (0.5 + rand() * 0.7);
-    let x = fine[i].x;
-    let y = fine[i].y;
+  const branches: ModeBranch[] = [];
+  const STEP = 0.019; // branch step length, uv-height units
+
+  const walk = (x: number, y: number, ang: number, steps: number, curve: number) => {
     const pts = [{ x, y }];
-    const steps = 2 + Math.floor(rand() * 4);
     for (let s = 0; s < steps; s++) {
-      ang += (rand() - 0.5) * 0.9;
-      x += Math.cos(ang) * STEP * (0.7 + rand() * 0.6);
-      y += Math.sin(ang) * STEP * (0.7 + rand() * 0.6);
+      ang += curve + (rand() - 0.5) * 0.32;
+      x += Math.cos(ang) * STEP * (0.75 + rand() * 0.5);
+      y += Math.sin(ang) * STEP * (0.75 + rand() * 0.5);
       pts.push({ x, y });
     }
-    branches.push({ anchor: i, pts });
+    return pts;
+  };
+
+  const spawn = (x: number, y: number, parentAng: number, anchorIdx: number, level: number) => {
+    const side = rand() < 0.5 ? 1 : -1;
+    const dir = rand() < 0.25 ? parentAng + Math.PI : parentAng; // mostly forward
+    const ang = dir + side * (0.28 + rand() * 0.34); // 16°–35° off the parent
+    const steps = level === 1 ? 5 + Math.floor(rand() * 8) : 3 + Math.floor(rand() * 4);
+    const curve = side * (0.04 + rand() * 0.09); // arcing gently away
+    const pts = walk(x, y, ang, steps, curve);
+    branches.push({ anchorIdx, pts, level });
+
+    if (level >= 3) return;
+    const nKids = level === 1 ? (rand() < 0.75 ? (rand() < 0.4 ? 2 : 1) : 0) : rand() < 0.35 ? 1 : 0;
+    for (let c = 0; c < nKids; c++) {
+      const j = 1 + Math.floor(rand() * (pts.length - 1));
+      const a = Math.atan2(pts[j].y - pts[j - 1].y, pts[j].x - pts[j - 1].x);
+      spawn(pts[j].x, pts[j].y, a, anchorIdx, level + 1);
+    }
+  };
+
+  for (let i = 3; i < fine.length - 3; i += 2 + Math.floor(rand() * 3)) {
+    if (rand() > 0.5) continue;
+    const tang = Math.atan2(fine[i + 1].y - fine[i - 1].y, fine[i + 1].x - fine[i - 1].x);
+    spawn(fine[i].x, fine[i].y, tang, i, 1);
   }
   return branches;
 }
