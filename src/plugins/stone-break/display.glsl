@@ -29,17 +29,12 @@ uniform vec4 u_pieceState[NP];   // xy = offset, z = rotation (radians)
 
 const float BURST_DUR = 0.5;
 
-// Manual bilinear read of crack depth (state texture is NEAREST-filtered)
+// The display pass binds the state texture through a LINEAR +
+// CLAMP_TO_EDGE sampler object: hardware filtering replaces a manual
+// 4-fetch bilinear, and edge texels never wrap to the opposite side of
+// the slab (the texture itself is REPEAT-wrapped for the compute pass).
 float crackDepth(vec2 uv) {
-  vec2 st = uv / u_stateTexel - 0.5;
-  vec2 i = floor(st);
-  vec2 f = st - i;
-  vec2 base = (i + 0.5) * u_stateTexel;
-  float d00 = texture(u_state, base).r;
-  float d10 = texture(u_state, base + vec2(u_stateTexel.x, 0.0)).r;
-  float d01 = texture(u_state, base + vec2(0.0, u_stateTexel.y)).r;
-  float d11 = texture(u_state, base + u_stateTexel).r;
-  return mix(mix(d00, d10, f.x), mix(d01, d11, f.x), f.y);
+  return texture(u_state, uv).r;
 }
 
 // Shade one slab pixel: rock colour with crack crevices carved in

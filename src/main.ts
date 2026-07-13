@@ -42,9 +42,18 @@ select.addEventListener('change', () => {
   location.hash = select.value;
 });
 
+let currentId: string | null = null;
+
 function loadFromHash() {
-  const id = PLUGINS[location.hash.slice(1)] ? location.hash.slice(1) : DEFAULT_ID;
+  const raw = location.hash.slice(1);
+  // hasOwnProperty guards against inherited keys (#__proto__, #constructor);
+  // an unknown hash keeps the running demo instead of resetting it
+  const id = Object.prototype.hasOwnProperty.call(PLUGINS, raw)
+    ? raw
+    : currentId ?? DEFAULT_ID;
   select.value = id;
+  if (id === currentId) return;
+  currentId = id;
   engine.loadPlugin(PLUGINS[id]());
 }
 

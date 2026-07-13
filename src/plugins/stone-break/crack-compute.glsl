@@ -127,7 +127,7 @@ void main() {
   float cost = BASE_COST + STRENGTH_COST * min(primary, web);
   // Deep cracks conduct: the gate sits above WEB_CAP so only primary
   // faults and strike spokes become highways for later taps
-  float conduit = clamp((s.r - 1.0) / 1.5, 0.0, 1.0);
+  float conduit = clamp((s.r - 1.35) / 0.65, 0.0, 1.0);
   cost *= 1.0 - CONDUCT * conduit;
 
   float e = max(s.g, best - cost) * mix(DECAY, DECAY_CONDUIT, conduit);

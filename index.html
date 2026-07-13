@@ -64,7 +64,9 @@
     </label>
   </header>
   <div id="stage"></div>
-  <p id="gl-error" style="color:#fff;font-family:system-ui,sans-serif;padding:2rem;display:none;"></p>
+  <!-- Fixed overlay: unhiding it must not reflow #stage (a stage resize
+       resets the running demo's simulation state) -->
+  <p id="gl-error" style="position:fixed;top:48px;left:0;right:0;z-index:30;background:rgba(0,0,0,0.85);color:#fff;font-family:system-ui,sans-serif;padding:2rem;display:none;"></p>
   <script>
     window.addEventListener('error', function(e) {
       var el = document.getElementById('gl-error');

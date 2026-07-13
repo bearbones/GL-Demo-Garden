@@ -10,17 +10,20 @@ import computeSrc from './crack-compute.glsl';
 import analysisSrc from './analysis.glsl';
 import displaySrc from './display.glsl';
 
-const NP = 12; // shatter piece count — must match NP in display.glsl
+const COLS = 4; // shatter piece grid
+const ROWS = 3;
+const NP = COLS * ROWS; // piece count — injected into display.glsl at compile
 
 const COMPUTE_STEPS = 6;        // crack-growth steps per frame
-const TAP_ENERGY = 2.4;
+const TAP_ENERGY = 2.8;
 const TAP_RADIUS = 0.045;       // splat radius, fraction of frame height
 const ANALYSIS_W = 64;
 const ANALYSIS_H = 40;
 const DEEP_FRAC_TARGET = 0.008; // deep-crack coverage needed to shatter
 const SPAN_TARGET = 0.85;       // crack network must reach this far across
-const BURST_BEAT = 0.5;         // light-shaft duration (matches display.glsl)
 const SHATTER_DELAY = 0.42;     // beat between final burst and pieces falling
+const ENERGY_WINDOW = 8;        // seconds after a tap that fracture energy can
+                                // still be alive; compute passes idle after it
 const FALL_DURATION = 2.4;
 const GRAVITY = 1.3;            // uv units / s²
 
@@ -53,6 +56,7 @@ export class StoneBreakPlugin implements Plugin {
 
   private analysisTex!: WebGLTexture;
   private analysisFBO!: WebGLFramebuffer;
+  private linearSampler!: WebGLSampler;
   private analysisBuf = new Uint8Array(ANALYSIS_W * ANALYSIS_H * 4);
 
   private locs = new WeakMap<WebGLProgram, Map<string, WebGLUniformLocation | null>>();
@@ -89,8 +93,22 @@ export class StoneBreakPlugin implements Plugin {
     this.injectProgram = createProgram(gl, quadVert, injectSrc);
     this.computeProgram = createProgram(gl, quadVert, computeSrc);
     this.analysisProgram = createProgram(gl, quadVert, analysisSrc);
-    this.displayProgram = createProgram(gl, quadVert, displaySrc);
+    this.displayProgram = createProgram(
+      gl,
+      quadVert,
+      // TS owns the piece count; keep the shader's array sizes in sync
+      displaySrc.replace(/const int NP = \d+;/, `const int NP = ${NP};`),
+    );
     this.vao = gl.createVertexArray()!;
+
+    // The display pass reads the crack field through this sampler:
+    // LINEAR replaces a manual 4-fetch bilinear, CLAMP_TO_EDGE stops the
+    // REPEAT-wrapped state texture from mirroring cracks across edges
+    this.linearSampler = gl.createSampler()!;
+    gl.samplerParameteri(this.linearSampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.samplerParameteri(this.linearSampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.samplerParameteri(this.linearSampler, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.samplerParameteri(this.linearSampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     this.crack = new PingPongFBO(gl, Math.floor(ctx.width / 2), Math.floor(ctx.height / 2));
 
@@ -175,17 +193,32 @@ export class StoneBreakPlugin implements Plugin {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
+  // Everything that must go back to zero when a fresh, uncracked slab
+  // takes over — called from both resetSlab() and resize()
+  private resetInteractionState() {
+    this.phase = 'intact';
+    this.breakProgress = 0;
+    this.lastTapTime = -100;
+    this.stallCount = 0;
+    this.progressAtLastTap = 0;
+    this.pendingTaps = [];
+  }
+
   resize(ctx: EngineContext) {
     const { gl } = ctx;
+    // If the slab was mid-shatter, complete the handover to the next one
+    // first — rebaking from the old seed would resurrect the slab the
+    // user just watched explode
+    if (this.phase !== 'intact') {
+      this.seeds = [this.seeds[1], Math.random() * 100];
+    }
     gl.deleteTexture(this.rockTex[0]);
     gl.deleteTexture(this.rockTex[1]);
     this.rockTex = [this.createRockTexture(gl, ctx.width, ctx.height), this.createRockTexture(gl, ctx.width, ctx.height)];
     this.bakeRock(ctx, 0);
     this.bakeRock(ctx, 1);
     this.crack.resize(gl, Math.floor(ctx.width / 2), Math.floor(ctx.height / 2));
-    this.phase = 'intact';
-    this.breakProgress = 0;
-    this.pendingTaps = [];
+    this.resetInteractionState();
   }
 
   onGesture(_ctx: EngineContext, event: GestureEvent) {
@@ -203,10 +236,14 @@ export class StoneBreakPlugin implements Plugin {
 
     if (this.phase === 'intact') {
       this.processTaps(ctx, aspect);
-      this.stepCracks(gl, aspect);
-      // Analyse damage while fracture energy could still be spreading
-      if (this.frame % 10 === 0 && time - this.lastTapTime < 6) {
-        this.analyseDamage(ctx);
+      // Fracture energy dies out a few seconds after the last strike;
+      // skip the compute passes entirely while the slab is idle
+      if (time - this.lastTapTime < ENERGY_WINDOW) {
+        this.stepCracks(gl, aspect);
+        // Analyse damage while fracture energy could still be spreading
+        if (this.frame % 10 === 0 && time - this.lastTapTime < 6) {
+          this.analyseDamage(ctx);
+        }
       }
     } else if (this.phase === 'bursting' && time >= this.shatterAt) {
       this.phase = 'falling';
@@ -223,19 +260,25 @@ export class StoneBreakPlugin implements Plugin {
   private processTaps(ctx: EngineContext, aspect: number) {
     const { gl, time } = ctx;
     for (const [x, y] of this.pendingTaps) {
-      // Working the stone: if the last strike barely moved the needle
-      // (e.g. it landed far from any fault), hit harder each time
-      if (this.breakProgress - this.progressAtLastTap < 0.04) {
-        this.stallCount = Math.min(this.stallCount + 1, 4);
-      } else {
-        this.stallCount = 0;
+      // Working the stone: if the last strike demonstrably failed to move
+      // the needle (it landed far from any fault), hit harder each time.
+      // Only evaluate when a damage analysis has actually run since the
+      // previous tap (they refresh every 10 frames) and this isn't the
+      // slab's first strike — otherwise rapid tapping reads a stale
+      // breakProgress and misclassifies healthy growth as a stall.
+      if (this.lastTapTime > 0 && time - this.lastTapTime > 0.8) {
+        if (this.breakProgress - this.progressAtLastTap < 0.04) {
+          this.stallCount = Math.min(this.stallCount + 1, 4);
+        } else {
+          this.stallCount = 0;
+        }
+        this.progressAtLastTap = this.breakProgress;
       }
-      this.progressAtLastTap = this.breakProgress;
 
       gl.useProgram(this.injectProgram);
       gl.uniform1i(this.uni(gl, this.injectProgram, 'u_state'), 0);
       gl.uniform2f(this.uni(gl, this.injectProgram, 'u_center'), x, y);
-      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_energy'), TAP_ENERGY * (1 + 0.5 * this.stallCount));
+      gl.uniform1f(this.uni(gl, this.injectProgram, 'u_energy'), TAP_ENERGY * (1 + 0.4 * this.stallCount));
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_radius'), TAP_RADIUS);
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_aspect'), aspect);
       gl.uniform1f(this.uni(gl, this.injectProgram, 'u_spokeRot'), Math.random() * Math.PI * 2);
@@ -347,19 +390,17 @@ export class StoneBreakPlugin implements Plugin {
 
     const aspect = ctx.width / ctx.height;
     const [tx, ty] = this.lastTap;
-    const cols = 4;
-    const rows = 3;
     this.pieces = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const i = r * cols + c;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const i = r * COLS + c;
         const jx = (Math.random() - 0.5) * 0.7;
         const jy = (Math.random() - 0.5) * 0.7;
         // Voronoi boundaries fall midway between seeds, so nudging each
         // seed to the least-cracked analysis cell nearby pulls the
         // fracture lines toward the actual crack seams
-        const gx = Math.round((((c + 0.5 + jx) / cols) * ANALYSIS_W));
-        const gy = Math.round((((r + 0.5 + jy) / rows) * ANALYSIS_H));
+        const gx = Math.round((((c + 0.5 + jx) / COLS) * ANALYSIS_W));
+        const gy = Math.round((((r + 0.5 + jy) / ROWS) * ANALYSIS_H));
         let bx = gx;
         let by = gy;
         let bestVal = Infinity;
@@ -417,11 +458,7 @@ export class StoneBreakPlugin implements Plugin {
     this.seeds = [this.seeds[1], Math.random() * 100];
     this.bakeRock(ctx, 1);
     this.clearCrackField(ctx.gl);
-    this.phase = 'intact';
-    this.breakProgress = 0;
-    this.lastTapTime = -100;
-    this.stallCount = 0;
-    this.progressAtLastTap = 0;
+    this.resetInteractionState();
   }
 
   private draw(ctx: EngineContext, aspect: number) {
@@ -441,6 +478,7 @@ export class StoneBreakPlugin implements Plugin {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.rockTex[1]);
     this.crack.bindRead(gl, 2);
+    gl.bindSampler(2, this.linearSampler);
 
     gl.uniform1i(this.uni(gl, p, 'u_rock'), 0);
     gl.uniform1i(this.uni(gl, p, 'u_rockNext'), 1);
@@ -463,6 +501,7 @@ export class StoneBreakPlugin implements Plugin {
     gl.uniform4fv(this.uni(gl, p, 'u_pieceState[0]'), this.pieceState);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindSampler(2, null); // don't leak the sampler to other passes/plugins
   }
 
   destroy(ctx: EngineContext) {
@@ -476,6 +515,7 @@ export class StoneBreakPlugin implements Plugin {
     gl.deleteFramebuffer(this.bakeFBO);
     gl.deleteFramebuffer(this.analysisFBO);
     gl.deleteTexture(this.analysisTex);
+    gl.deleteSampler(this.linearSampler);
     gl.deleteTexture(this.rockTex[0]);
     gl.deleteTexture(this.rockTex[1]);
     this.crack.destroy(gl);
