@@ -188,6 +188,126 @@ export function computeFractureModes(seed: number, aspect: number, count: number
   return paths;
 }
 
+export interface RegionMap {
+  /** Piece id per cell, row-major, origin bottom-left (matches UV space). */
+  ids: Uint8Array;
+  gw: number;
+  gh: number;
+  count: number;
+  /** Piece centroids in aspect-corrected UV space. */
+  centroids: { x: number; y: number }[];
+  /** Piece areas as fractions of the slab. */
+  areas: number[];
+}
+
+// Partitions the slab into shatter pieces bounded by the REVEALED crack
+// paths: the polylines are rasterized as walls on a fine grid, connected
+// regions are flood-filled, and wall cells are then absorbed into the
+// nearest region. The pieces the slab breaks into are exactly the areas
+// its cracks enclose.
+export function buildRegionMap(
+  paths: ModePath[],
+  revealed: boolean[],
+  aspect: number,
+  maxPieces: number,
+): RegionMap {
+  const gh = 116;
+  const gw = Math.max(32, Math.round(gh * aspect));
+  const WALL = 254;
+  const UNSET = 255;
+  const ids = new Uint8Array(gw * gh).fill(UNSET);
+
+  for (let k = 0; k < paths.length; k++) {
+    if (!revealed[k]) continue;
+    const pts = paths[k].pts;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const ax = (pts[i].x / aspect) * gw;
+      const ay = pts[i].y * gh;
+      const bx = (pts[i + 1].x / aspect) * gw;
+      const by = pts[i + 1].y * gh;
+      const steps = Math.max(1, Math.ceil(Math.max(Math.abs(bx - ax), Math.abs(by - ay)) * 2));
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const cx = Math.min(gw - 1, Math.max(0, Math.floor(ax + (bx - ax) * t)));
+        const cy = Math.min(gh - 1, Math.max(0, Math.floor(ay + (by - ay) * t)));
+        ids[cy * gw + cx] = WALL;
+      }
+    }
+  }
+
+  // Flood-fill connected open regions (4-connectivity)
+  const regionCells: number[][] = [];
+  const queue = new Int32Array(gw * gh);
+  for (let start = 0; start < gw * gh; start++) {
+    if (ids[start] !== UNSET) continue;
+    const id = regionCells.length;
+    if (id >= 200) break; // can't happen with sane path counts
+    const cells: number[] = [];
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = start;
+    ids[start] = id;
+    while (head < tail) {
+      const n = queue[head++];
+      cells.push(n);
+      const nx = n % gw;
+      const ny = (n / gw) | 0;
+      if (nx > 0 && ids[n - 1] === UNSET) { ids[n - 1] = id; queue[tail++] = n - 1; }
+      if (nx < gw - 1 && ids[n + 1] === UNSET) { ids[n + 1] = id; queue[tail++] = n + 1; }
+      if (ny > 0 && ids[n - gw] === UNSET) { ids[n - gw] = id; queue[tail++] = n - gw; }
+      if (ny < gh - 1 && ids[n + gw] === UNSET) { ids[n + gw] = id; queue[tail++] = n + gw; }
+    }
+    regionCells.push(cells);
+  }
+
+  // Keep the largest maxPieces regions; everything else (small slivers,
+  // wall cells) is absorbed into the nearest kept region by BFS
+  const order = regionCells.map((cells, i) => ({ i, size: cells.length })).sort((a, b) => b.size - a.size);
+  const remap = new Int32Array(regionCells.length).fill(-1);
+  const kept = order.slice(0, maxPieces);
+  kept.forEach((r, newId) => { remap[r.i] = newId; });
+
+  let head = 0;
+  let tail = 0;
+  for (let n = 0; n < gw * gh; n++) {
+    const v = ids[n];
+    if (v !== WALL && remap[v] >= 0) {
+      ids[n] = remap[v];
+      queue[tail++] = n;
+    } else {
+      ids[n] = UNSET;
+    }
+  }
+  while (head < tail) {
+    const n = queue[head++];
+    const id = ids[n];
+    const nx = n % gw;
+    const ny = (n / gw) | 0;
+    if (nx > 0 && ids[n - 1] === UNSET) { ids[n - 1] = id; queue[tail++] = n - 1; }
+    if (nx < gw - 1 && ids[n + 1] === UNSET) { ids[n + 1] = id; queue[tail++] = n + 1; }
+    if (ny > 0 && ids[n - gw] === UNSET) { ids[n - gw] = id; queue[tail++] = n - gw; }
+    if (ny < gh - 1 && ids[n + gw] === UNSET) { ids[n + gw] = id; queue[tail++] = n + gw; }
+  }
+
+  const count = kept.length;
+  const centroids: { x: number; y: number }[] = [];
+  const areas: number[] = [];
+  const sums = new Float64Array(count * 3);
+  for (let n = 0; n < gw * gh; n++) {
+    const id = ids[n];
+    if (id >= count) continue;
+    sums[id * 3] += (n % gw) + 0.5;
+    sums[id * 3 + 1] += ((n / gw) | 0) + 0.5;
+    sums[id * 3 + 2]++;
+  }
+  for (let id = 0; id < count; id++) {
+    const cnt = Math.max(sums[id * 3 + 2], 1);
+    centroids.push({ x: (sums[id * 3] / cnt / gw) * aspect, y: sums[id * 3 + 1] / cnt / gh });
+    areas.push(sums[id * 3 + 2] / (gw * gh));
+  }
+  return { ids, gw, gh, count, centroids, areas };
+}
+
 // Recursive midpoint displacement: each subdivision offsets the midpoint
 // perpendicular to its segment by an amount proportional to the segment
 // length, giving scale-invariant (Brownian) crackle around the base path

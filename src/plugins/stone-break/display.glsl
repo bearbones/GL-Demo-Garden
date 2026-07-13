@@ -24,8 +24,11 @@ uniform float u_phase;           // 0 = intact, 1 = falling pieces
 uniform float u_fallT;           // seconds since shatter began
 
 const int NP = 12;
-uniform vec2 u_pieceSeed[NP];    // Voronoi seeds, aspect-corrected UV space
+uniform vec2 u_pieceSeed[NP];    // Voronoi seeds / piece centroids, aspect-corrected UV
 uniform vec4 u_pieceState[NP];   // xy = offset, z = rotation (radians)
+uniform int u_pieceCount;
+uniform sampler2D u_pieceMap;    // piece id per texel (fracture-modes shatter)
+uniform float u_useMap;          // 1 = membership from u_pieceMap, 0 = Voronoi
 
 const float BURST_DUR = 0.5;
 
@@ -89,6 +92,7 @@ void main() {
 
     vec2 uvA = vec2(uv.x * aspect, uv.y);
     for (int i = 0; i < NP; i++) {
+      if (i >= u_pieceCount) break;
       vec2 c = u_pieceSeed[i];
       vec4 ps = u_pieceState[i];
       // Inverse rigid transform: where was this pixel before the piece moved?
@@ -98,21 +102,32 @@ void main() {
       vec2 p = vec2(cs * q.x - sn * q.y, sn * q.x + cs * q.y) + c;
       if (p.x < 0.0 || p.x > aspect || p.y < 0.0 || p.y > 1.0) continue;
 
-      // Jittered Voronoi membership → jagged fracture boundaries
-      vec2 pj = p + 0.014 * vec2(snoise(p * 27.0), snoise(p * 27.0 + 47.1));
-      int best = 0;
-      float b1 = 1e9;
-      float b2 = 1e9;
-      for (int k = 0; k < NP; k++) {
-        float dk = distance(pj, u_pieceSeed[k]);
-        if (dk < b1) { b2 = b1; b1 = dk; best = k; }
-        else { b2 = min(b2, dk); }
+      float edge = 0.0;
+      if (u_useMap > 0.5) {
+        // Fracture-modes shatter: pieces are the regions the revealed
+        // cracks enclose, read from the CPU-built id map. A touch of
+        // jitter hides the map grid's stair-stepping; the crack seams
+        // themselves (drawn dark by shadeRock) dress the boundaries.
+        vec2 pj = p + 0.004 * vec2(snoise(p * 47.0), snoise(p * 47.0 + 13.0));
+        int id = int(floor(texture(u_pieceMap, vec2(pj.x / aspect, pj.y)).r * 255.0 + 0.5));
+        if (id != i) continue;
+      } else {
+        // Jittered Voronoi membership → jagged fracture boundaries
+        vec2 pj = p + 0.014 * vec2(snoise(p * 27.0), snoise(p * 27.0 + 47.1));
+        int best = 0;
+        float b1 = 1e9;
+        float b2 = 1e9;
+        for (int k = 0; k < NP; k++) {
+          float dk = distance(pj, u_pieceSeed[k]);
+          if (dk < b1) { b2 = b1; b1 = dk; best = k; }
+          else { b2 = min(b2, dk); }
+        }
+        if (best != i) continue;
+        edge = smoothstep(0.045, 0.0, b2 - b1);
       }
-      if (best != i) continue;
 
       vec2 puv = vec2(p.x / aspect, p.y);
       vec3 rc = shadeRock(u_rock, puv, 0.0);   // pieces keep their crack marks
-      float edge = smoothstep(0.045, 0.0, b2 - b1);
       rc *= 1.0 - 0.55 * edge;                 // raw fractured rim
       col = rc;
       break;

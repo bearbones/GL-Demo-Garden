@@ -13,7 +13,7 @@ import stressRelaxSrc from './stress-relax.glsl';
 import growStressSrc from './grow-stress.glsl';
 import growWeibullSrc from './grow-weibull.glsl';
 import stampSegmentsSrc from './stamp-segments.glsl';
-import { computeFractureModes, ModePath } from './fracture-modes';
+import { computeFractureModes, buildRegionMap, ModePath, RegionMap } from './fracture-modes';
 
 const COLS = 4; // shatter piece grid
 const ROWS = 3;
@@ -136,6 +136,9 @@ export class StoneBreakPlugin implements Plugin {
   private pieces: Piece[] = [];
   private pieceSeed = new Float32Array(NP * 2);
   private pieceState = new Float32Array(NP * 4);
+  private pieceMapTex: WebGLTexture | null = null;
+  private pieceCount = NP;
+  private useMap = false;
 
   init(ctx: EngineContext) {
     const { gl } = ctx;
@@ -711,8 +714,65 @@ export class StoneBreakPlugin implements Plugin {
     this.shakeAmp = 0.022;
 
     const aspect = ctx.width / ctx.height;
+    this.useMap = false;
+    this.pieceCount = NP;
+    let areas: number[] | null = null;
+
+    if (this.model === 'modes' && this.modePaths.length > 0) {
+      // The final failure: every struck crack SNAPS — its reveal
+      // completes through the whole slab during the burst beat — and the
+      // pieces are exactly the regions those cracks enclose
+      const revealed = this.modePaths.map((path, k) => {
+        const rv = this.modeReveal[k];
+        if (rv.lo < 0) return false;
+        rv.lo = 0;
+        rv.hi = path.pts.length - 1;
+        rv.depth = Math.max(rv.depth, 4.5);
+        this.stampReveal(ctx.gl, path, rv, aspect);
+        return true;
+      });
+      const map = buildRegionMap(this.modePaths, revealed, aspect, NP);
+      if (map.count >= 2) {
+        this.uploadPieceMap(ctx.gl, map);
+        this.pieceCount = map.count;
+        this.useMap = true;
+        areas = map.areas;
+        for (let i = 0; i < map.count; i++) {
+          this.pieceSeed[i * 2] = map.centroids[i].x;
+          this.pieceSeed[i * 2 + 1] = map.centroids[i].y;
+        }
+      }
+    }
+    if (!this.useMap) this.seedVoronoiPieces(aspect);
+
+    // Radiate away from the final tap, pop up a little, then gravity wins.
+    // With real shards, spin scales inversely with size: big slabs turn
+    // lazily, chips tumble.
     const [tx, ty] = this.lastTap;
     this.pieces = [];
+    for (let i = 0; i < this.pieceCount; i++) {
+      const sx = this.pieceSeed[i * 2];
+      const sy = this.pieceSeed[i * 2 + 1];
+      let dx = sx - tx * aspect;
+      let dy = sy - ty;
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len;
+      dy /= len;
+      const speed = 0.1 + Math.random() * 0.25;
+      const spin = areas ? Math.min(1.5, 0.28 / Math.sqrt(Math.max(areas[i], 0.02))) : 1;
+      this.pieces.push({
+        x: 0,
+        y: 0,
+        rot: 0,
+        vx: dx * speed,
+        vy: dy * speed + 0.15 + Math.random() * 0.2,
+        vr: (Math.random() - 0.5) * 4.0 * spin,
+      });
+    }
+    this.pieceState.fill(0);
+  }
+
+  private seedVoronoiPieces(aspect: number) {
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const i = r * COLS + c;
@@ -736,29 +796,23 @@ export class StoneBreakPlugin implements Plugin {
             }
           }
         }
-        const sx = ((Math.min(Math.max(bx, 0), ANALYSIS_W - 1) + 0.5) / ANALYSIS_W) * aspect;
-        const sy = (Math.min(Math.max(by, 0), ANALYSIS_H - 1) + 0.5) / ANALYSIS_H;
-        this.pieceSeed[i * 2] = sx;
-        this.pieceSeed[i * 2 + 1] = sy;
-
-        // Radiate away from the final tap, pop up a little, then gravity wins
-        let dx = sx - tx * aspect;
-        let dy = sy - ty;
-        const len = Math.hypot(dx, dy) || 1;
-        dx /= len;
-        dy /= len;
-        const speed = 0.1 + Math.random() * 0.25;
-        this.pieces.push({
-          x: 0,
-          y: 0,
-          rot: 0,
-          vx: dx * speed,
-          vy: dy * speed + 0.15 + Math.random() * 0.2,
-          vr: (Math.random() - 0.5) * 4.0,
-        });
+        this.pieceSeed[i * 2] = ((Math.min(Math.max(bx, 0), ANALYSIS_W - 1) + 0.5) / ANALYSIS_W) * aspect;
+        this.pieceSeed[i * 2 + 1] = (Math.min(Math.max(by, 0), ANALYSIS_H - 1) + 0.5) / ANALYSIS_H;
       }
     }
-    this.pieceState.fill(0);
+  }
+
+  private uploadPieceMap(gl: WebGL2RenderingContext, map: RegionMap) {
+    if (!this.pieceMapTex) this.pieceMapTex = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.pieceMapTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, map.gw, map.gh, 0, gl.RED, gl.UNSIGNED_BYTE, map.ids);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
   private updatePieces(dt: number) {
@@ -801,6 +855,8 @@ export class StoneBreakPlugin implements Plugin {
     gl.bindTexture(gl.TEXTURE_2D, this.rockTex[1]);
     this.crack.bindRead(gl, 2);
     gl.bindSampler(2, this.linearSampler);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.pieceMapTex);
 
     gl.uniform1i(this.uni(gl, p, 'u_rock'), 0);
     gl.uniform1i(this.uni(gl, p, 'u_rockNext'), 1);
@@ -821,6 +877,9 @@ export class StoneBreakPlugin implements Plugin {
     gl.uniform1f(this.uni(gl, p, 'u_fallT'), this.phase === 'falling' ? time - this.fallStart : 0);
     gl.uniform2fv(this.uni(gl, p, 'u_pieceSeed[0]'), this.pieceSeed);
     gl.uniform4fv(this.uni(gl, p, 'u_pieceState[0]'), this.pieceState);
+    gl.uniform1i(this.uni(gl, p, 'u_pieceMap'), 3);
+    gl.uniform1i(this.uni(gl, p, 'u_pieceCount'), this.pieceCount);
+    gl.uniform1f(this.uni(gl, p, 'u_useMap'), this.useMap ? 1 : 0);
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindSampler(2, null); // don't leak the sampler to other passes/plugins
@@ -842,6 +901,7 @@ export class StoneBreakPlugin implements Plugin {
     gl.deleteFramebuffer(this.analysisFBO);
     gl.deleteTexture(this.analysisTex);
     gl.deleteSampler(this.linearSampler);
+    if (this.pieceMapTex) gl.deleteTexture(this.pieceMapTex);
     gl.deleteTexture(this.rockTex[0]);
     gl.deleteTexture(this.rockTex[1]);
     this.crack.destroy(gl);
