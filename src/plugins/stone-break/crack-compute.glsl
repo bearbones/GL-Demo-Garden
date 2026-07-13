@@ -68,23 +68,26 @@ float voroEdge(vec2 p) {
   return sqrt(f2) - sqrt(f1);
 }
 
+// Random offset field with LINEAR (unsmoothed) bilinear interpolation:
+// continuous everywhere — so warped lines never tear — but its gradient
+// jumps at cell borders, putting a sharp kink in anything it warps
+vec2 kinkField(vec2 x) {
+  vec2 i = floor(x);
+  vec2 f = fract(x);
+  vec2 a = hash22(i + u_seed + 3.7);
+  vec2 b = hash22(i + vec2(1.0, 0.0) + u_seed + 3.7);
+  vec2 c = hash22(i + vec2(0.0, 1.0) + u_seed + 3.7);
+  vec2 d = hash22(i + vec2(1.0, 1.0) + u_seed + 3.7);
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y) - 0.5;
+}
+
 void rockFields(vec2 uv, out float primary, out float web) {
   vec2 p = vec2(uv.x * u_aspect, uv.y);
-  // Kinks are per-cell ROTATIONS of the lookup space about the cell
-  // centre (on a rotated grid so seams never read axis-aligned): inside
-  // each cell the fault keeps its heading, and at every cell border the
-  // heading jumps ~±12° — angular kinks, not sideways jogs. A tiny
-  // translation adds irregularity. Both stay small enough that the
-  // displaced segments still connect across borders.
+  // The kink grid is rotated so heading changes never align with the
+  // screen axes; the warp itself is continuous (see kinkField), so the
+  // fault kinks ~every cell without shear discontinuities
   vec2 pr = mat2(0.891, 0.454, -0.454, 0.891) * p;
-  vec2 cellId = floor(pr * 13.0);
-  vec2 rel = pr - (cellId + 0.5) / 13.0;
-  float ang = (hash21(cellId + u_seed + 3.7) - 0.5) * 0.42;
-  float ca = cos(ang);
-  float sa = sin(ang);
-  vec2 prw = (cellId + 0.5) / 13.0 + mat2(ca, sa, -sa, ca) * rel
-           + 0.008 * (hash22(cellId + u_seed + 9.1) - 0.5);
-  vec2 pw = mat2(0.891, -0.454, 0.454, 0.891) * prw;
+  vec2 pw = p + 0.035 * kinkField(pr * 13.0);
   primary = voroEdge(pw * 2.2 + u_seed * 7.0) * 1.4;
   web = voroEdge(p * 8.0 + u_seed * 3.0) * 2.6 + WEB_TAX;
 }
@@ -117,11 +120,14 @@ void main() {
   float e = max(s.g, best - cost) * mix(DECAY, DECAY_CONDUIT, conduit);
   if (e < CUTOFF) e = 0.0;
 
-  // Gaussian deposit profiles: sharply peaked on the fault line, so a
-  // young crack only crosses the display threshold in a hairline core
-  // and widens gradually as it deepens
-  float valleyP = exp(-pow(primary / 0.014, 2.0));
-  float valleyW = exp(-pow(max(web - WEB_TAX, 0.0) / 0.012, 2.0));
+  // Gaussian deposit profiles, normalized by the field gradient so the
+  // band is a constant width in PIXELS: a young crack crosses the
+  // display threshold only in a hairline core, widens gradually as it
+  // deepens, and never bloats into wedges where the field goes flat
+  float gp = max(length(vec2(dFdx(primary), dFdy(primary))), 1e-4);
+  float valleyP = exp(-pow(primary / (2.2 * gp), 2.0));
+  float gw = max(length(vec2(dFdx(web), dFdy(web))), 1e-4);
+  float valleyW = exp(-pow(max(web - WEB_TAX, 0.0) / (1.8 * gw), 2.0));
   float deposit = e * DEPTH_RATE * valleyP
                 + e * DEPTH_RATE * 0.9 * valleyW * (1.0 - smoothstep(WEB_CAP - 0.2, WEB_CAP, s.r));
   float d = s.r + deposit;
