@@ -13,7 +13,7 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 | **Laser Bird** | 80s anime light-being with multi-pass bloom | Tap/drag to move; Form slider morphs bird ↔ swallowtail butterfly |
 | **Boat Wake** | Kelvin wake foam advection | Passive; foam trails behind boat |
 
-Navigate between demos using the links in the top bar, or by setting the URL hash directly:
+Navigate between demos using the dropdown in the top bar, or by setting the URL hash directly:
 
 ```
 http://localhost:5173/#ripple-drop
