@@ -8,6 +8,7 @@ import { LaserBirdPlugin } from './plugins/laser-bird';
 import { SeaMeltPlugin } from './plugins/sea-melt';
 import { GlassWaterPlugin } from './plugins/glass-water';
 import { StoneBreakPlugin } from './plugins/stone-break';
+import { LighthouseVigilPlugin } from './plugins/lighthouse-vigil';
 
 const PLUGINS: Record<string, () => Plugin> = {
   'wobbly-cells': () => new WobbyCellsPlugin(),
@@ -18,6 +19,7 @@ const PLUGINS: Record<string, () => Plugin> = {
   'sea-melt': () => new SeaMeltPlugin(),
   'glass-water': () => new GlassWaterPlugin(),
   'stone-break': () => new StoneBreakPlugin(),
+  'lighthouse-vigil': () => new LighthouseVigilPlugin(),
 };
 
 const DEFAULT_ID = 'wobbly-cells';
