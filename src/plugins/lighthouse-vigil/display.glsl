@@ -57,11 +57,14 @@ vec2 beamTerms(vec2 p) {
   float ang = atan(v.y, v.x);
   float c = cos(u_time * u_beamSpeed);
   float ac = abs(c);
-  // A slightly down-tilted lens rotating in the horizontal plane: the
-  // projected slope steepens as the beam swings toward the viewer, so each
-  // rotation the beam dives down across the near water (and the boat).
-  float slope = -0.12 / max(ac, 0.18);
-  float axis = atan(slope, sign(c));
+  // A lens tilted down by a small angle, rotating in the horizontal plane.
+  // Projecting its 3D direction (cos φ · cos ε, −sin ε) to the screen makes
+  // the apparent axis steepen as the beam swings toward the viewer and pass
+  // CONTINUOUSLY through straight-down at the frontal transit — no frozen
+  // axis, no skipped arc — before rising up the other side. Apparent angular
+  // speed peaks mid-transit, which is exactly how a real lighthouse reads.
+  const float TILT = 0.12;
+  float axis = atan(-sin(TILT), c * cos(TILT));
   float dAng = abs(mod(ang - axis + PI, TAU) - PI);
   float flashK = pow(clamp(1.0 - ac, 0.0, 1.0), 6.0);
   float halfW = u_beamWidth * (0.55 + 0.45 * ac) / max(ac, 0.16);
@@ -169,12 +172,15 @@ void main() {
   float t = u_time;
   float px = 1.5 / u_resolution.y;
 
-  // Scene anchors
-  g_cliffL  = aspect * 0.145;
-  g_cliffR  = aspect * 0.245;
+  // Scene anchors. The cliff is anchored to the tower with fixed margins
+  // (in height units, not aspect-scaled): the tower's width is fixed, so a
+  // proportional cliff collapses out from under it in portrait and leaves
+  // the lighthouse overhanging the face.
   g_moon    = vec2(-aspect * 0.30, 0.315);
   float bx  = aspect * 0.335;
   g_lantern = vec2(bx, 0.393);
+  g_cliffR  = bx - 0.13;
+  g_cliffL  = g_cliffR - 0.18;
 
   float rock = u_swell * (0.14 * sin(t * 0.85) + 0.06 * sin(t * 1.53 + 1.2));
   float bob  = u_swell * (0.012 * sin(t * 0.85 + 0.9) + 0.007 * sin(t * 1.31 + 2.0));
