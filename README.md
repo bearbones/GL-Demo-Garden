@@ -13,6 +13,7 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 | **Laser Bird** | 80s anime light-being with multi-pass bloom | Tap/drag to move; Form slider morphs bird ↔ swallowtail butterfly |
 | **Boat Wake** | Kelvin wake foam advection | Passive; foam trails behind boat |
 | **Stone Break** | Procedural rock fracture — four switchable models: Voronoi faults, phase-field-style stress damage, Weibull random-fuse breakdown, and Breaking-Good-style precomputed fracture modes | Tap to crack; repeated taps deepen and extend the network until the slab shatters and falls away. Model dropdown + per-model tuning sliders |
+| **Lighthouse Vigil** | Cel-shaded night seascape: rotating lighthouse beam over a rocking sailboat, moonlit cliff and posterized water | Passive; sliders for beam speed/width, swell, and haze |
 
 Navigate between demos using the dropdown in the top bar, or by setting the URL hash directly:
 

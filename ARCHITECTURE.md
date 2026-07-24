@@ -72,7 +72,7 @@ Two patterns cover all current demos.
 
 ### Pattern A — Single-Pass Fragment Shader
 
-Used by: **Wobbly Cells**, **Sea Melt**, **Glass Water**, **Ripple Drop**, and as the display pass in multi-pass demos.
+Used by: **Wobbly Cells**, **Sea Melt**, **Glass Water**, **Ripple Drop**, **Lighthouse Vigil**, and as the display pass in multi-pass demos.
 
 Base class: `src/plugin/FragmentShaderPlugin.ts`
 
@@ -305,6 +305,21 @@ Repeat taps grow the long cracks rather than the crackle, via two conduction rul
 **Near the break point** (`breakProgress` > 0.6), each tap fires a half-second burst of light shafts: the display shader marches from every pixel toward the strike, accumulating emission from deep cracks along the ray — god rays anchored to the actual crack shapes — while camera shake (a decaying UV offset of summed sines) scales up with `breakProgress`. Crossing the threshold fires one violent burst, then after a 0.4 s beat the slab shatters.
 
 **Shatter** splits the screen into 12 jittered-Voronoi pieces. Seeds are nudged toward the *least-cracked* analysis cells nearby, which pulls Voronoi boundaries onto the crack seams (boundaries fall midway between seeds). Each piece is a rigid body on the CPU — radial impulse from the strike, gravity, spin — and the display shader inverse-transforms each pixel per piece to decide membership and sample the old slab (crack scars included), revealing the fresh slab behind. After the fall the textures swap, a new "next" slab is baked, and the crack field is cleared.
+
+### Lighthouse Vigil (Cel-Shaded Night Seascape)
+
+A passive, single-pass scene: a striped lighthouse on a craggy headland sweeps its beam across a moonlit sea while a small sailboat rocks on the swell below. Everything is analytic — SDF geometry, heightfield rock, quantized lighting — with no simulation state.
+
+Two light sources drive the whole image, in deliberate opposition:
+
+- **The beam** (warm gold, primary). The lens rotates in the *horizontal* plane; the shader projects that rotation into screen space. The projected slope is `tilt / max(|cos φ|, ε)` — near-constant while the beam points sideways, steepening sharply as the lens swings toward the viewer — so once per rotation the beam dives down across the near water and rakes the boat. At the same moment its apparent angular width blows up (`1 / |cos φ|`) and a flash term (`(1−|cos φ|)⁶`) fires the lantern flare: the classic lighthouse "sweep… sweep… FLASH" cadence, from geometry alone. The volumetric wedge is shaped by angular smoothsteps around the axis, textured by drifting fbm fog and radial streak noise, occluded by the cliff and tower masks, and mirrored (with noise-wobbled x) below the waterline as its reflection.
+- **The moon** (cool silver, secondary). A disc with posterized maria, a soft Lorentzian halo, and a glitter path of thresholded noise dashes on the water. Surfaces take moonlight as cel bands: the cliff is an implicit heightfield `y − h(x + fbm)` whose finite-difference normal is dotted with the moon direction and quantized to three silver steps — the craggy left-facing faces catch the light while the rest stays near-black. The boat and lighthouse get the same treatment (two bands plus a hard rim step on moon-facing silhouette edges).
+
+The boat is a rigid SDF assembly (crescent hull = circle ∩ half-plane, capsule mast, triangle sail) evaluated in a rocking frame: roll and heave are summed sines scaled by the Swell slider, so the hull genuinely pitches on the water rather than translating. Its reflection mirrors only hull and mast about the waterline — a mirrored sail reads as a detached blob rather than a reflection.
+
+The water avoids flat-fill light pools: swell bands are perspective-compressed fbm quantized to four steps, and the beam's surface term is multiplied by `band²`, so incoming light brightens the quantized crests it lands on instead of overlaying a smooth gradient. Ink outlines (thin `|SDF|` strokes) edge the cliff, tower, and boat; foam dashes break at the cliff base and hull waterline.
+
+Sliders: beam rotation speed, beam angular width, swell amplitude (chop + boat rocking), and haze (volumetric gain).
 
 ### Boat Wake (Kelvin Wake + Foam Advection)
 
