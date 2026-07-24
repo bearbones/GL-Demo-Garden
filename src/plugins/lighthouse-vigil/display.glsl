@@ -91,13 +91,18 @@ float sdTriangle(vec2 p, vec2 p0, vec2 p1, vec2 p2) {
   return -sqrt(d.x) * sign(d.y);
 }
 
+const float BOAT_S = 1.25;
+
 float hullSD(vec2 q) { return max(sdCircle(q - vec2(0.0, 0.105), 0.132), q.y - 0.012); }
 float mastSD(vec2 q) { return sdLine(q, vec2(0.0, 0.012), vec2(0.0, 0.175)) - 0.0042; }
 float sailSD(vec2 q) { return sdTriangle(q, vec2(0.010, 0.030), vec2(0.010, 0.162), vec2(0.104, 0.036)); }
+float jibSD(vec2 q)  { return sdTriangle(q, vec2(-0.010, 0.026), vec2(-0.010, 0.150), vec2(-0.094, 0.028)); }
+float boomSD(vec2 q) { return sdLine(q, vec2(0.004, 0.026), vec2(0.112, 0.031)) - 0.0035; }
 
 float boatField(vec2 wp) {
-  vec2 q = g_boatR * (wp - g_boatPos);
-  return min(hullSD(q), min(mastSD(q), sailSD(q)));
+  vec2 q = g_boatR * (wp - g_boatPos) / BOAT_S;
+  float d = min(hullSD(q), min(mastSD(q), sailSD(q)));
+  return min(d, min(jibSD(q), boomSD(q))) * BOAT_S;
 }
 
 void main() {
@@ -128,19 +133,30 @@ void main() {
   float c = cos(t * u_beamSpeed);
   float flashK = pow(clamp(1.0 - abs(c), 0.0, 1.0), 6.0);
 
+  vec2 bt = beamTerms(p);
+
   // ── Sky ──────────────────────────────────────────────────────────
   float skyT = clamp((p.y - HORIZON) / (0.5 - HORIZON), 0.0, 1.0);
   vec3 sky = mix(SKY_HAZE, SKY_TOP, pow(skyT, 0.75));
   float moonD = length(p - g_moon);
   sky += MOONLIGHT * 0.16 * exp(-moonD * 3.2);
 
-  // Thin posterized clouds, silvered near the moon
-  float cl = fbm3(vec2(p.x * 1.6 - t * 0.015, p.y * 4.2));
-  float cloud = smoothstep(0.26, 0.40, cl) * smoothstep(0.05, 0.25, skyT);
-  vec3 cloudCol = mix(vec3(0.035, 0.045, 0.080), MOONLIGHT * 0.55, exp(-moonD * 2.0));
-  sky = mix(sky, cloudCol, cloud * 0.85);
+  // Clouds: two warped fbm layers posterized into hard-edged cel shapes —
+  // slate cores, a lining band on every edge that silvers near the moon,
+  // and a warm glow wherever the beam is currently passing through them.
+  vec2 cq = vec2(p.x * 0.85 - t * 0.014, p.y * 2.0);
+  vec2 cw = vec2(snoise(cq * 1.6 + 3.1), snoise(cq * 1.6 + 9.4)) * 0.10;
+  float cd = fbm3(cq + cw) * 0.62 + fbm3(cq * 2.4 + vec2(17.0, -t * 0.02)) * 0.38;
+  float cMask = smoothstep(0.20, 0.24, cd) * smoothstep(0.06, 0.18, skyT);
+  float cCore = smoothstep(0.30, 0.42, cd);
+  float lining = smoothstep(0.20, 0.235, cd) * (1.0 - smoothstep(0.235, 0.29, cd));
+  float nearMoon = exp(-moonD * 1.8);
+  vec3 cCol = mix(vec3(0.060, 0.072, 0.115), vec3(0.028, 0.034, 0.065), cCore);
+  cCol += MOONLIGHT * lining * (0.035 + 0.80 * nearMoon);
+  cCol += BEAM_WARM * min(bt.x, 1.2) * 0.55;
+  sky = mix(sky, cCol, cMask * 0.95);
 
-  // Stars
+  // Stars (occluded by cloud)
   vec2 sgv = p * 26.0;
   vec2 cell = floor(sgv);
   float sh = hash21(cell);
@@ -148,7 +164,7 @@ void main() {
   float sd = length(fract(sgv) - 0.5 - soff);
   float tw = 0.55 + 0.45 * sin(t * 2.2 + sh * 40.0);
   float star = smoothstep(0.045, 0.0, sd) * step(0.82, sh) * tw;
-  star *= smoothstep(0.02, 0.12, skyT) * (1.0 - exp(-moonD * 2.5) * 0.9);
+  star *= smoothstep(0.02, 0.12, skyT) * (1.0 - exp(-moonD * 2.5) * 0.9) * (1.0 - cMask);
   sky += MOON_SILVER * star * 0.8;
 
   // Moon disc with posterized maria
@@ -162,7 +178,6 @@ void main() {
   vec3 col = mix(sky, moonCol, moonMask);
 
   // ── Water ────────────────────────────────────────────────────────
-  vec2 bt = beamTerms(p);
   float depth = max(wl - p.y, 0.0);
   float persp = 1.0 / (depth + 0.055);
   vec2 wuv = vec2(p.x * (0.55 + persp * 0.18), persp * 0.85 + t * 0.22);
@@ -191,9 +206,9 @@ void main() {
   float cf = cliffField(p);
   float cliffMask = smoothstep(px, -px, cf) * smoothstep(wl - 0.012, wl + 0.004, p.y);
 
-  float baseY = 0.115, topY = 0.360;
+  float baseY = 0.090, topY = 0.360;
   float ty = clamp((p.y - baseY) / (topY - baseY), 0.0, 1.0);
-  float hw = mix(0.052, 0.031, ty);
+  float hw = mix(0.056, 0.031, ty);
   float towerD = max(abs(p.x - bx) - hw, max(baseY - p.y, p.y - topY));
   float galD   = max(abs(p.x - bx) - 0.046, max(0.360 - p.y, p.y - 0.372));
   float roomD  = max(abs(p.x - bx) - 0.026, max(0.372 - p.y, p.y - 0.412));
@@ -202,42 +217,37 @@ void main() {
   float lhD = min(min(towerD, galD), min(roomD, roofD));
   float lhMask = smoothstep(px, -px, lhD);
 
+  vec2 e = vec2(0.004, 0.0);
+  vec2 mlDir = normalize(g_moon - p);
+
   // ── Volumetric beam over sky and sea ─────────────────────────────
   float beamVis = bt.x * (1.0 - cliffMask) * (1.0 - lhMask)
                 * smoothstep(wl - 0.005, wl + 0.012, p.y);
   col += BEAM_WARM * beamVis * u_haze;
 
-  // ── Cliff in silvery repose ──────────────────────────────────────
-  vec2 e = vec2(0.004, 0.0);
-  vec2 cn = normalize(vec2(cliffField(p + e.xy) - cf, cliffField(p + e.yx) - cf) + 1e-5);
-  vec2 mlDir = normalize(g_moon - p);
-  float dif = clamp(dot(cn, mlDir), 0.0, 1.0);
-  float moonBand = floor(dif * 3.0 + 0.35) / 3.0;
-  float rockTex = floor((fbm3(p * 6.5 + 3.0) * 0.5 + 0.5) * 3.0) / 3.0;
-  vec3 cliffCol = ROCK_DARK * (0.55 + rockTex * 0.5);
-  cliffCol += MOONLIGHT * moonBand * 0.34 * (0.6 + 0.4 * rockTex);
-  float crest = smoothstep(-0.012, -0.001, cf) * step(0.35, dif);
-  cliffCol += MOONLIGHT * crest * 0.4;
-  cliffCol += BEAM_WARM * floor(clamp(bt.y * 1.8, 0.0, 1.0) * 2.0) / 2.0 * 0.25
-            * clamp(dot(cn, normalize(g_lantern - p)), 0.0, 1.0);
-  cliffCol += BEAM_WARM * 0.10 * exp(-length(p - vec2(bx, 0.16)) * 6.0);
-  cliffCol *= 0.5 + 0.5 * smoothstep(wl, wl + 0.25, p.y);
-  col = mix(col, cliffCol, cliffMask);
-  col = mix(col, INK, smoothstep(px * 2.2, px * 0.4, abs(cf)) * 0.8
-                    * smoothstep(wl, wl + 0.02, p.y));
-
-  // Surf breaking at the cliff base
-  float foamN = snoise(vec2(p.x * 40.0 - t * 0.8, p.y * 40.0));
-  float foam = smoothstep(0.035, 0.0, abs(p.y - wl))
-             * smoothstep(0.12, 0.01, abs(cf)) * step(0.0, foamN);
-  col += MOON_SILVER * foam * 0.4;
-
-  // ── Lighthouse ───────────────────────────────────────────────────
-  float stripe = mod(floor((p.y - baseY) / 0.049), 2.0);
-  vec3 lhBase = mix(vec3(0.78, 0.80, 0.86), vec3(0.42, 0.14, 0.16), stripe);
-  float moonSide = smoothstep(0.012, -0.020, p.x - bx);
-  vec3 towerCol = lhBase * (0.10 + 0.20 * floor(moonSide * 2.0 + 0.5) / 2.0);
-  towerCol += MOONLIGHT * 0.10 * moonSide;
+  // ── Lighthouse (drawn first — the cliff crest then occludes its base,
+  // so the tower rises from behind the rock instead of floating on it) ──
+  float stripe = mod(floor((p.y - baseY) / 0.054), 2.0);
+  vec3 lhBase = mix(vec3(0.80, 0.82, 0.88), vec3(0.45, 0.15, 0.17), stripe);
+  // Pseudo-cylindrical cel shading: moon key from the left with a hard
+  // three-step terminator rolling into core shadow on the right, plus a
+  // silver edge highlight just inside the moonlit rim.
+  float cyl = clamp((p.x - bx) / max(hw, 1e-4), -1.0, 1.0);
+  float lam = clamp(0.52 - 0.62 * cyl, 0.0, 1.0);
+  float shadeBand = floor(lam * 3.0 + 0.34) / 3.0;
+  vec3 towerCol = lhBase * (0.10 + 0.38 * shadeBand);
+  towerCol += MOONLIGHT * 0.15 * shadeBand;
+  towerCol += MOON_SILVER * 0.22 * smoothstep(0.30, 0.08, abs(cyl + 0.78));
+  // Warm underglow spilling down the shaft from the lantern room
+  float lg = exp(-length(p - g_lantern) * 4.5) * (0.75 + 1.5 * flashK);
+  towerCol += BEAM_WARM * floor(clamp(lg, 0.0, 1.0) * 3.0) / 3.0 * 0.30;
+  // Lit keeper's windows down the shaft
+  for (int i = 0; i < 3; i++) {
+    float wy = 0.150 + float(i) * 0.068;
+    float wD = length(vec2((p.x - bx) * 1.7, p.y - wy)) - 0.013;
+    towerCol = mix(towerCol, vec3(0.030, 0.028, 0.048), smoothstep(px, -px, wD));
+    towerCol += BEAM_WARM * 0.75 * smoothstep(0.002, -0.006, wD);
+  }
   vec3 galleryCol = vec3(0.030, 0.032, 0.050);
   vec3 roofCol = vec3(0.050, 0.055, 0.085)
                + MOONLIGHT * 0.30 * smoothstep(0.004, -0.018, p.x - bx);
@@ -251,48 +261,107 @@ void main() {
   col = mix(col, lhCol, lhMask);
   col = mix(col, INK, smoothstep(px * 2.0, px * 0.5, abs(lhD)) * 0.85);
 
-  // Lantern glow + flash flare when the lens faces the viewer
+  // Gallery railing: posts and a handrail silhouetted around the lantern
+  float railX = smoothstep(0.048, 0.044, abs(p.x - bx)) * smoothstep(0.026, 0.030, abs(p.x - bx));
+  float railBand = smoothstep(0.372, 0.375, p.y) * smoothstep(0.402, 0.398, p.y);
+  float posts = step(0.92, abs(sin((p.x - bx) * 500.0)));
+  float handrail = smoothstep(px * 1.6, px * 0.4, abs(p.y - 0.400))
+                 * smoothstep(0.048, 0.044, abs(p.x - bx));
+  col = mix(col, INK * 1.4, clamp(railBand * railX * posts + handrail, 0.0, 1.0) * 0.9);
+
+  // ── Cliff in silvery repose (over the tower base — grounds it) ───
+  vec2 cn = normalize(vec2(cliffField(p + e.xy) - cf, cliffField(p + e.yx) - cf) + 1e-5);
+  float dif = clamp(dot(cn, mlDir), 0.0, 1.0);
+  float moonBand = floor(dif * 3.0 + 0.35) / 3.0;
+  float rockTex = floor((fbm3(p * 6.5 + 3.0) * 0.5 + 0.5) * 3.0) / 3.0;
+  vec3 cliffCol = ROCK_DARK * (0.55 + rockTex * 0.5);
+  cliffCol += MOONLIGHT * moonBand * 0.34 * (0.6 + 0.4 * rockTex);
+  float crest = smoothstep(-0.012, -0.001, cf) * step(0.35, dif);
+  cliffCol += MOONLIGHT * crest * 0.4;
+  cliffCol += BEAM_WARM * floor(clamp(bt.y * 1.8, 0.0, 1.0) * 2.0) / 2.0 * 0.25
+            * clamp(dot(cn, normalize(g_lantern - p)), 0.0, 1.0);
+  cliffCol += BEAM_WARM * 0.10 * exp(-length(p - vec2(bx, 0.16)) * 6.0);
+  // Moon-cast shadow of the tower falling across the headland
+  vec2 sdir = normalize(vec2(1.0, -0.20));
+  vec2 srel = p - vec2(bx, 0.10);
+  float along = dot(srel, sdir);
+  float perpd = abs(dot(srel, vec2(-sdir.y, sdir.x)));
+  float shad = step(0.02, along) * smoothstep(0.055, 0.042, perpd) * smoothstep(0.60, 0.20, along);
+  cliffCol *= 1.0 - shad * 0.5;
+  cliffCol *= 0.5 + 0.5 * smoothstep(wl, wl + 0.25, p.y);
+  col = mix(col, cliffCol, cliffMask);
+  col = mix(col, INK, smoothstep(px * 2.2, px * 0.4, abs(cf)) * 0.8
+                    * smoothstep(wl, wl + 0.02, p.y));
+
+  // Surf breaking at the cliff base
+  float foamN = snoise(vec2(p.x * 40.0 - t * 0.8, p.y * 40.0));
+  float foam = smoothstep(0.035, 0.0, abs(p.y - wl))
+             * smoothstep(0.12, 0.01, abs(cf)) * step(0.0, foamN);
+  col += MOON_SILVER * foam * 0.4;
+
+  // Lantern glow + flash flare (after the cliff so it blooms over the crest)
   float lr = length(p - g_lantern);
   col += BEAM_WARM * softGlow(lr, 0.30 + 0.9 * flashK, 26.0);
   col += BEAM_WARM * flashK * exp(-abs(p.y - g_lantern.y) * 40.0) * exp(-lr * 2.2) * 1.2;
 
   // ── Boat ─────────────────────────────────────────────────────────
-  vec2 q = g_boatR * (p - g_boatPos);
-  float hD = hullSD(q);
-  float mD2 = mastSD(q);
-  float sD = sailSD(q);
-  float bD = min(hD, min(mD2, sD));
+  vec2 q = g_boatR * (p - g_boatPos) / BOAT_S;
+  float hD    = hullSD(q) * BOAT_S;
+  float mD2   = mastSD(q) * BOAT_S;
+  float sD    = sailSD(q) * BOAT_S;
+  float jD    = jibSD(q) * BOAT_S;
+  float boomD = boomSD(q) * BOAT_S;
+  float bD = min(min(hD, boomD), min(mD2, min(sD, jD)));
   float boatMask = smoothstep(px, -px, bD);
 
-  // Wobbly dark reflection of the whole boat, drawn beneath it first
-  float bwl = g_boatPos.y - 0.012;
+  // Wobbly dark reflection of hull + mast, drawn beneath the boat first
+  // (a mirrored sail reads as a blob, so the canvas stays out of it)
+  float bwl = g_boatPos.y - 0.015;
   vec2 rp2 = vec2(p.x + snoise(vec2(p.y * 18.0, t * 0.8)) * 0.004, 2.0 * bwl - p.y);
-  vec2 q2 = g_boatR * (rp2 - g_boatPos);
-  float rD = min(hullSD(q2), mastSD(q2));   // hull + mast only; a mirrored sail reads as a blob
+  vec2 q2 = g_boatR * (rp2 - g_boatPos) / BOAT_S;
+  float rD = min(hullSD(q2), mastSD(q2)) * BOAT_S;
   float rMask = smoothstep(px * 2.0, -px * 2.0, rD)
               * smoothstep(0.0, -0.01, p.y - bwl)
               * smoothstep(0.16, 0.03, bwl - p.y)
-              * smoothstep(0.17, 0.11, abs(p.x - g_boatPos.x));
+              * smoothstep(0.20, 0.13, abs(p.x - g_boatPos.x));
   col = mix(col, INK * 1.6 + WATER_MID * 0.3, rMask * 0.35);
 
   vec2 nb = normalize(vec2(boatField(p + e.xy) - bD, boatField(p + e.yx) - bD) + 1e-5);
-  vec3 bCol = vec3(0.085, 0.075, 0.100);
-  float sailBoost = 0.45;
-  if (sD < hD && sD < mD2) { bCol = vec3(0.24, 0.26, 0.33); sailBoost = 0.9; }
-  else if (mD2 < hD)       { bCol = vec3(0.060, 0.055, 0.075); }
+  vec3 bCol;
+  float warmGain;
+  float sailGlow = 0.0;
+  if (bD == sD || bD == jD) {
+    bCol = (bD == sD) ? vec3(0.27, 0.29, 0.36) : vec3(0.22, 0.24, 0.31);
+    warmGain = 1.0;
+    sailGlow = 1.0;
+    float seam = smoothstep(0.0026, 0.0008, abs(q.y - 0.064))
+               + smoothstep(0.0026, 0.0008, abs(q.y - 0.100))
+               + smoothstep(0.0026, 0.0008, abs(q.y - 0.136));
+    bCol *= 1.0 - clamp(seam, 0.0, 1.0) * 0.22;
+  } else if (bD == mD2 || bD == boomD) {
+    bCol = vec3(0.055, 0.050, 0.070);
+    warmGain = 0.45;
+  } else {
+    bCol = vec3(0.075, 0.066, 0.092);
+    warmGain = 0.6;
+    // painted sheer stripe along the gunwale, dark boot-top at the waterline
+    bCol = mix(bCol, vec3(0.34, 0.12, 0.13), smoothstep(0.0030, 0.0012, abs(q.y - 0.004)));
+    bCol = mix(bCol, vec3(0.030, 0.028, 0.040), smoothstep(-0.012, -0.020, q.y));
+  }
   float beamFace = clamp(dot(nb, normalize(g_lantern - p)), 0.0, 1.0);
-  float lightAmt = clamp(bt.y * 2.2, 0.0, 1.0) * (0.35 + 0.65 * beamFace);
-  bCol += BEAM_WARM * floor(lightAmt * 3.0 + 0.3) / 3.0 * sailBoost;
+  float lightAmt = clamp(bt.y * 2.4, 0.0, 1.0) * (0.30 + 0.70 * beamFace);
+  bCol += BEAM_WARM * floor(lightAmt * 3.0 + 0.34) / 3.0 * warmGain * 0.9;
+  bCol += BEAM_WARM * min(bt.x, 1.2) * sailGlow * 0.8;  // canvas backlit by the passing beam
   float mif = clamp(dot(nb, mlDir), 0.0, 1.0);
-  bCol += MOONLIGHT * floor(mif * 2.0 + 0.45) / 2.0 * 0.16;
-  float rim = smoothstep(-0.014, -0.003, bD) * step(0.45, mif);
+  bCol += MOONLIGHT * floor(mif * 2.0 + 0.45) / 2.0 * 0.20;
+  float rim = smoothstep(-0.016, -0.004, bD) * step(0.45, mif);
   bCol += MOONLIGHT * rim * 0.55;
   col = mix(col, bCol, boatMask);
   col = mix(col, INK, smoothstep(px * 2.2, px * 0.5, abs(bD)) * 0.9);
 
   // Ink dashes of foam at the hull waterline
-  float hullWater = smoothstep(0.018, 0.0, abs(p.y - bwl))
-                  * smoothstep(0.14, 0.09, abs(p.x - g_boatPos.x));
+  float hullWater = smoothstep(0.02, 0.0, abs(p.y - bwl))
+                  * smoothstep(0.17, 0.11, abs(p.x - g_boatPos.x));
   float fdash = step(0.35, snoise(vec2(p.x * 55.0 - t * 0.6, p.y * 90.0 + t * 0.9)));
   col += MOON_SILVER * hullWater * fdash * 0.22 * (1.0 - boatMask);
 
