@@ -93,16 +93,57 @@ float sdTriangle(vec2 p, vec2 p0, vec2 p1, vec2 p2) {
 
 const float BOAT_S = 1.25;
 
-float hullSD(vec2 q) { return max(sdCircle(q - vec2(0.0, 0.105), 0.132), q.y - 0.012); }
-float mastSD(vec2 q) { return sdLine(q, vec2(0.0, 0.012), vec2(0.0, 0.175)) - 0.0042; }
-float sailSD(vec2 q) { return sdTriangle(q, vec2(0.010, 0.030), vec2(0.010, 0.162), vec2(0.104, 0.036)); }
-float jibSD(vec2 q)  { return sdTriangle(q, vec2(-0.010, 0.026), vec2(-0.010, 0.150), vec2(-0.094, 0.028)); }
-float boomSD(vec2 q) { return sdLine(q, vec2(0.004, 0.026), vec2(0.112, 0.031)) - 0.0035; }
+float sdBox(vec2 p, vec2 b) {
+  vec2 d = abs(p) - b;
+  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+}
+
+// A gaff schooner, bow to the right: long low hull with a sheer line rising
+// toward the bow, tall mainmast aft + shorter foremast, a quadrilateral gaff
+// sail behind each mast, and a jib flown from a bowsprit.
+float deckLine(float x) {
+  return 0.006 + 0.06 * x * x + 0.012 * smoothstep(0.06, 0.14, x);
+}
+float hullSD(vec2 q) {
+  vec2 s = vec2(q.x * 0.72, q.y);
+  return max(sdCircle(s - vec2(0.0, 0.112), 0.135), q.y - deckLine(q.x));
+}
+float cabinSD(vec2 q) {
+  return sdBox(q - vec2(0.012, 0.014), vec2(0.022, 0.007)) - 0.003;
+}
+float mastsSD(vec2 q) {
+  float m1 = sdLine(q, vec2(-0.048, 0.012), vec2(-0.048, 0.205)) - 0.0036;
+  float m2 = sdLine(q, vec2(0.052, 0.012), vec2(0.052, 0.165)) - 0.0034;
+  float bs = sdLine(q, vec2(0.112, 0.026), vec2(0.172, 0.040)) - 0.0028;
+  return min(min(m1, m2), bs);
+}
+float sparsSD(vec2 q) {
+  float b1 = sdLine(q, vec2(-0.044, 0.042), vec2(-0.132, 0.048)) - 0.0026;
+  float b2 = sdLine(q, vec2(0.048, 0.042), vec2(-0.024, 0.045)) - 0.0024;
+  float g1 = sdLine(q, vec2(-0.044, 0.186), vec2(-0.120, 0.152)) - 0.0024;
+  float g2 = sdLine(q, vec2(0.048, 0.152), vec2(-0.014, 0.128)) - 0.0022;
+  return min(min(b1, b2), min(g1, g2));
+}
+float mainSailSD(vec2 q) {
+  float t1 = sdTriangle(q, vec2(-0.042, 0.046), vec2(-0.042, 0.182), vec2(-0.116, 0.150));
+  float t2 = sdTriangle(q, vec2(-0.042, 0.046), vec2(-0.116, 0.150), vec2(-0.126, 0.052));
+  return min(t1, t2);
+}
+float foreSailSD(vec2 q) {
+  float t1 = sdTriangle(q, vec2(0.046, 0.046), vec2(0.046, 0.148), vec2(-0.008, 0.126));
+  float t2 = sdTriangle(q, vec2(0.046, 0.046), vec2(-0.008, 0.126), vec2(-0.018, 0.048));
+  return min(t1, t2);
+}
+float jibSD(vec2 q) {
+  return sdTriangle(q, vec2(0.168, 0.040), vec2(0.054, 0.158), vec2(0.062, 0.046));
+}
 
 float boatField(vec2 wp) {
   vec2 q = g_boatR * (wp - g_boatPos) / BOAT_S;
-  float d = min(hullSD(q), min(mastSD(q), sailSD(q)));
-  return min(d, min(jibSD(q), boomSD(q))) * BOAT_S;
+  float d = min(hullSD(q), cabinSD(q));
+  d = min(d, min(mastsSD(q), sparsSD(q)));
+  d = min(d, min(mainSailSD(q), min(foreSailSD(q), jibSD(q))));
+  return d * BOAT_S;
 }
 
 void main() {
@@ -306,62 +347,82 @@ void main() {
 
   // ── Boat ─────────────────────────────────────────────────────────
   vec2 q = g_boatR * (p - g_boatPos) / BOAT_S;
-  float hD    = hullSD(q) * BOAT_S;
-  float mD2   = mastSD(q) * BOAT_S;
-  float sD    = sailSD(q) * BOAT_S;
-  float jD    = jibSD(q) * BOAT_S;
-  float boomD = boomSD(q) * BOAT_S;
-  float bD = min(min(hD, boomD), min(mD2, min(sD, jD)));
+  float hD    = min(hullSD(q), cabinSD(q)) * BOAT_S;
+  float mD2   = min(mastsSD(q), sparsSD(q)) * BOAT_S;
+  float sMain = mainSailSD(q) * BOAT_S;
+  float sFore = foreSailSD(q) * BOAT_S;
+  float sJib  = jibSD(q) * BOAT_S;
+  float sD = min(sMain, min(sFore, sJib));
+  float bD = min(hD, min(mD2, sD));
   float boatMask = smoothstep(px, -px, bD);
 
-  // Wobbly dark reflection of hull + mast, drawn beneath the boat first
+  // Wobbly dark reflection of hull + masts, drawn beneath the boat first
   // (a mirrored sail reads as a blob, so the canvas stays out of it)
-  float bwl = g_boatPos.y - 0.015;
+  float bwl = g_boatPos.y - 0.016;
   vec2 rp2 = vec2(p.x + snoise(vec2(p.y * 18.0, t * 0.8)) * 0.004, 2.0 * bwl - p.y);
   vec2 q2 = g_boatR * (rp2 - g_boatPos) / BOAT_S;
-  float rD = min(hullSD(q2), mastSD(q2)) * BOAT_S;
+  float rD = min(hullSD(q2), mastsSD(q2)) * BOAT_S;
   float rMask = smoothstep(px * 2.0, -px * 2.0, rD)
               * smoothstep(0.0, -0.01, p.y - bwl)
               * smoothstep(0.16, 0.03, bwl - p.y)
-              * smoothstep(0.20, 0.13, abs(p.x - g_boatPos.x));
+              * smoothstep(0.24, 0.16, abs(p.x - g_boatPos.x));
   col = mix(col, INK * 1.6 + WATER_MID * 0.3, rMask * 0.35);
 
   vec2 nb = normalize(vec2(boatField(p + e.xy) - bD, boatField(p + e.yx) - bD) + 1e-5);
   vec3 bCol;
   float warmGain;
   float sailGlow = 0.0;
-  if (bD == sD || bD == jD) {
-    bCol = (bD == sD) ? vec3(0.27, 0.29, 0.36) : vec3(0.22, 0.24, 0.31);
+  if (bD == sD) {
+    // Dark night canvas — presence comes from rim light and translucency,
+    // not from a bright base fill.
+    bCol = (bD == sJib) ? vec3(0.150, 0.160, 0.205)
+         : (bD == sMain) ? vec3(0.140, 0.150, 0.195) : vec3(0.125, 0.135, 0.180);
     warmGain = 1.0;
     sailGlow = 1.0;
-    float seam = smoothstep(0.0026, 0.0008, abs(q.y - 0.064))
-               + smoothstep(0.0026, 0.0008, abs(q.y - 0.100))
-               + smoothstep(0.0026, 0.0008, abs(q.y - 0.136));
-    bCol *= 1.0 - clamp(seam, 0.0, 1.0) * 0.22;
-  } else if (bD == mD2 || bD == boomD) {
-    bCol = vec3(0.055, 0.050, 0.070);
-    warmGain = 0.45;
+    // Canvas modelling: lighter aloft, a soft belly shadow in the middle of
+    // each panel, and faint horizontal seams.
+    bCol *= 0.84 + 0.16 * smoothstep(0.04, 0.16, q.y);
+    bCol *= 1.0 - 0.12 * smoothstep(0.004, 0.014, -sD / BOAT_S);
+    float seam = smoothstep(0.0022, 0.0007, abs(q.y - 0.075))
+               + smoothstep(0.0022, 0.0007, abs(q.y - 0.105))
+               + smoothstep(0.0022, 0.0007, abs(q.y - 0.135));
+    bCol *= 1.0 - clamp(seam, 0.0, 1.0) * 0.12;
+  } else if (bD == mD2) {
+    bCol = vec3(0.052, 0.046, 0.062);
+    warmGain = 0.40;
   } else {
-    bCol = vec3(0.075, 0.066, 0.092);
-    warmGain = 0.6;
-    // painted sheer stripe along the gunwale, dark boot-top at the waterline
-    bCol = mix(bCol, vec3(0.34, 0.12, 0.13), smoothstep(0.0030, 0.0012, abs(q.y - 0.004)));
+    bCol = vec3(0.062, 0.055, 0.070);
+    warmGain = 0.55;
+    // muted sheer stripe under the gunwale, dark boot-top at the waterline,
+    // a pale cap along the deck edge, and a dim warm cabin window
+    float dl = deckLine(q.x);
+    bCol = mix(bCol, vec3(0.190, 0.085, 0.085), smoothstep(0.0030, 0.0012, abs(q.y - dl + 0.007)) * 0.75);
     bCol = mix(bCol, vec3(0.030, 0.028, 0.040), smoothstep(-0.012, -0.020, q.y));
+    bCol += MOONLIGHT * 0.18 * smoothstep(0.0020, 0.0006, abs(q.y - dl));
+    bCol += BEAM_WARM * 0.55 * smoothstep(0.0015, -0.0035, length(q - vec2(0.012, 0.015)) - 0.005);
   }
+  // The lighthouse sits behind and to the right: its light lands as a hot rim
+  // on lighthouse-facing edges and a glow through the canvas — never as a
+  // frontal fill on camera-facing surfaces.
   float beamFace = clamp(dot(nb, normalize(g_lantern - p)), 0.0, 1.0);
-  float lightAmt = clamp(bt.y * 2.4, 0.0, 1.0) * (0.30 + 0.70 * beamFace);
-  bCol += BEAM_WARM * floor(lightAmt * 3.0 + 0.34) / 3.0 * warmGain * 0.9;
-  bCol += BEAM_WARM * min(bt.x, 1.2) * sailGlow * 0.8;  // canvas backlit by the passing beam
+  float beamAmt = clamp(bt.y * 2.4, 0.0, 1.0);
+  float keyed = beamAmt * smoothstep(0.25, 0.65, beamFace);
+  bCol += BEAM_WARM * (0.20 * smoothstep(0.16, 0.24, keyed)
+                     + 0.40 * smoothstep(0.46, 0.54, keyed)) * warmGain;
+  float beamRim = smoothstep(-0.011, -0.0025, bD) * smoothstep(0.30, 0.62, beamFace) * beamAmt;
+  bCol += BEAM_WARM * beamRim * 1.1;
+  bCol += BEAM_WARM * min(bt.x, 1.2) * sailGlow * 0.6;  // canvas backlit by the passing beam
   float mif = clamp(dot(nb, mlDir), 0.0, 1.0);
-  bCol += MOONLIGHT * floor(mif * 2.0 + 0.45) / 2.0 * 0.20;
-  float rim = smoothstep(-0.016, -0.004, bD) * step(0.45, mif);
-  bCol += MOONLIGHT * rim * 0.55;
+  float moonFill = 0.5 * smoothstep(0.30, 0.38, mif) + 0.5 * smoothstep(0.62, 0.70, mif);
+  bCol += MOONLIGHT * moonFill * 0.15;
+  float rim = smoothstep(-0.012, -0.003, bD) * smoothstep(0.40, 0.55, mif);
+  bCol += MOONLIGHT * rim * 0.40;
   col = mix(col, bCol, boatMask);
-  col = mix(col, INK, smoothstep(px * 2.2, px * 0.5, abs(bD)) * 0.9);
+  col = mix(col, INK, smoothstep(px * 1.8, px * 0.5, abs(bD)) * 0.55);
 
   // Ink dashes of foam at the hull waterline
   float hullWater = smoothstep(0.02, 0.0, abs(p.y - bwl))
-                  * smoothstep(0.17, 0.11, abs(p.x - g_boatPos.x));
+                  * smoothstep(0.22, 0.15, abs(p.x - g_boatPos.x));
   float fdash = step(0.35, snoise(vec2(p.x * 55.0 - t * 0.6, p.y * 90.0 + t * 0.9)));
   col += MOON_SILVER * hullWater * fdash * 0.22 * (1.0 - boatMask);
 
