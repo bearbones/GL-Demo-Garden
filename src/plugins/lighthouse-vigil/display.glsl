@@ -55,28 +55,34 @@ vec2 beamTerms(vec2 p) {
   vec2 v = p - g_lantern;
   float r = length(v);
   float ang = atan(v.y, v.x);
-  float c = cos(u_time * u_beamSpeed);
+  float phi = u_time * u_beamSpeed;
+  float c = cos(phi);
+  float s = sin(phi);
   float ac = abs(c);
-  // A lens tilted down by a small angle, rotating in the horizontal plane.
-  // Projecting its 3D direction (cos φ · cos ε, −sin ε) to the screen makes
-  // the apparent axis steepen as the beam swings toward the viewer and pass
-  // CONTINUOUSLY through straight-down at the frontal transit — no frozen
-  // axis, no skipped arc — before rising up the other side. Apparent angular
-  // speed peaks mid-transit, which is exactly how a real lighthouse reads.
-  const float TILT = 0.12;
-  float axis = atan(-sin(TILT), c * cos(TILT));
+  // A lens tilted down by a small angle, rotating a FULL CIRCLE in the
+  // horizontal plane. Projecting its 3D direction (cos φ · cos ε, −sin ε)
+  // to the screen makes the apparent axis steepen and pass continuously
+  // through straight-down at the near transit. The projected direction
+  // alone is front/back symmetric — rendered symmetrically it reads as an
+  // oscillating searchlight — so the far half of the orbit (sin φ < 0,
+  // receding behind the tower) is treated differently: foreshortened to a
+  // dim, thin, horizon-hugging pass with no flash, occluded by the tower.
+  float fr = smoothstep(-0.25, 0.30, s);
+  float tilt = 0.12 * mix(0.55, 1.0, fr);          // far pass hugs the horizon
+  float axis = atan(-sin(tilt), c * cos(tilt));
   float dAng = abs(mod(ang - axis + PI, TAU) - PI);
-  float flashK = pow(clamp(1.0 - ac, 0.0, 1.0), 6.0);
-  float halfW = u_beamWidth * (0.55 + 0.45 * ac) / max(ac, 0.16);
+  float flashK = pow(clamp(1.0 - ac, 0.0, 1.0), 6.0) * fr;  // flash only facing the viewer
+  float halfW = u_beamWidth * (0.55 + 0.45 * ac)
+              * mix(0.55, 1.0 / max(ac, 0.16), fr);  // thinner behind, no blow-up
   float wedge  = 1.0 - smoothstep(halfW * 0.45, halfW, dAng);
   float fringe = (1.0 - smoothstep(halfW, halfW * 3.2, dAng)) * 0.30;
-  float fall = exp(-r * 1.35);
+  float fall = exp(-r * mix(3.0, 1.35, fr));       // receding beam foreshortens to a stub
   float fog = 0.72 + 0.28 * fbm3(p * 3.0 + vec2(-u_time * 0.18, u_time * 0.03));
   float streak = 0.85 + 0.15 * snoise(vec2(r * 9.0 - u_time * 1.6, dAng * 30.0));
-  float facing = 0.62 + 0.38 * ac + 1.4 * flashK;
+  float facing = (0.62 + 0.38 * ac + 1.4 * flashK) * mix(0.35, 1.0, fr);
   float vol = (wedge + fringe) * fall * fog * streak * facing;
   float surf = (1.0 - smoothstep(halfW * 0.6, halfW * 1.2, dAng))
-             * exp(-r * 1.0) * (0.7 + 0.3 * ac + flashK);
+             * exp(-r * 1.0) * (0.7 + 0.3 * ac + flashK) * mix(0.25, 1.0, fr);
   return vec2(vol, surf);
 }
 
@@ -195,7 +201,8 @@ void main() {
   float waterMask = smoothstep(px, -px, p.y - wl);
 
   float c = cos(t * u_beamSpeed);
-  float flashK = pow(clamp(1.0 - abs(c), 0.0, 1.0), 6.0);
+  float fr = smoothstep(-0.25, 0.30, sin(t * u_beamSpeed));
+  float flashK = pow(clamp(1.0 - abs(c), 0.0, 1.0), 6.0) * fr;
 
   vec2 bt = beamTerms(p);
 
@@ -285,8 +292,11 @@ void main() {
   vec2 mlDir = normalize(g_moon - p);
 
   // ── Volumetric beam over sky and sea ─────────────────────────────
+  // On the far half of the rotation the beam is behind the cloud layer
+  // (and reads through gaps); on the near half it's in front.
   float beamVis = bt.x * (1.0 - cliffMask) * (1.0 - lhMask)
-                * smoothstep(wl - 0.005, wl + 0.012, p.y);
+                * smoothstep(wl - 0.005, wl + 0.012, p.y)
+                * mix(1.0 - cMask * 0.8, 1.0, fr);
   col += BEAM_WARM * beamVis * u_haze;
 
   // ── Lighthouse (drawn first — the cliff crest then occludes its base,
@@ -316,7 +326,10 @@ void main() {
   vec3 roofCol = vec3(0.050, 0.055, 0.085)
                + MOONLIGHT * 0.30 * smoothstep(0.004, -0.018, p.x - bx);
   float mull = step(0.72, abs(sin((p.x - bx) * 260.0)));
-  vec3 roomCol = BEAM_WARM * (1.05 + 0.8 * flashK) * (1.0 - mull * 0.75);
+  // The glass dims slightly while the lens faces away — the far half of the
+  // rotation reads on the tower itself, not just in the sky.
+  vec3 roomCol = BEAM_WARM * (1.05 + 0.8 * flashK) * (0.78 + 0.22 * fr)
+               * (1.0 - mull * 0.75);
 
   vec3 lhCol = towerCol;
   lhCol = mix(lhCol, galleryCol, smoothstep(px, -px, galD));
