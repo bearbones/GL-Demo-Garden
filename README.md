@@ -8,13 +8,11 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 |------|-------------|-------------|
 | **Wobbly Cells** | Animated Voronoi mosaic | Gather/spread lens, four palettes, density, seams, light, drift, freeze and reshuffle |
 | **Turing Patterns** | Gray-Scott reaction-diffusion | Plant/erase brushes, chemistry recipes, palettes, seed layouts, pause, step, reseed and clear |
-| **Bubble Physics** | Instanced rising disks | Press and drag to gather and disturb bubbles |
+| **Bubble Physics** | Deformable underwater bubbles | Stir the water; tune flow, rise, size and release rate |
 | **Ripple Drop** | Smoothly expanding inked pond ripples | Choose rings or spirals; tap or drag; tune rain, perspective, lifetime, stroke and subtle ink wobble; clear pond |
-| **Laser Bird** | 80s anime light-being with multi-pass bloom | Tap/drag to move; Form slider morphs bird ↔ swallowtail butterfly |
 | **Sea Melt** | Flowing foam contours | Tune warp, crest width/count and drift |
-| **Glass Water** | Layered water contours | Tune warp, line widths, drift and crest count |
-| **Stone Break** | Procedural rock fracture — four switchable models: Voronoi faults, phase-field-style stress damage, Weibull random-fuse breakdown, and Breaking-Good-style precomputed fracture modes | Tap to crack; repeated taps deepen and extend the network until the slab shatters and falls away. Model dropdown + per-model tuning sliders |
-| **Lighthouse Vigil** | Cel-shaded night seascape: rotating lighthouse beam over a rocking sailboat, moonlit cliff and posterized water | Passive; sliders for beam speed/width, swell, and haze |
+| **Stone Break** | One shared fracture network for cracks and pieces | Strike a framed stone slab, then reassemble it or make a new stone |
+| **Searchlights** | Beams, drifting haze and occluding forms | Aim the lights; explore beam width, sweep, haze and blocker arrangements |
 | **Paper Marbling** | Ebru / suminagashi: paint floating on a size bath. Drops push older paint into rings; a stylus or comb drags it into hearts, chevrons, and feathers. Exact backward replay of invertible ops, so combed edges never blur | Tap to drop paint; drag to pull the stylus (or a straight comb, or sprinkle drops). Pattern menu plays the classics (Bullseyes, Stone, Gel-gel, Chevron, Nonpareil, Bouquet, Suminagashi); Print lays paper on the bath |
 
 Open the **Demo Garden** drawer to switch demos and adjust their tools. It starts collapsed on phones. **Hide**, **H**, or **Escape** hides the interface; the small **Controls** tab or **H** brings it back. Opening, closing and hiding controls leave the full-size canvas and simulation state intact. **Restart** restores the active demo's defaults. **Full screen** is available when the browser supports it.
@@ -39,7 +37,10 @@ Verification:
 
 ```bash
 npm run test:cells          # 24,000-case nearest-cell oracle and original-bug negative control
+npm run test:stone          # Shared seam, coverage and triangulation checks across generated slabs
+npm run test:bubbles        # Frame-schedule identity, rise, contact and stirring checks
 npx playwright install chromium
+npm run test:searchlights   # Production shader checks for shadows, aiming, freeze and light controls
 npm run test:browser        # Production build, all-demo WebGL smoke and desktop/mobile control checks
 ```
 
@@ -77,10 +78,10 @@ src/
 ├── plugins/
 │   ├── wobbly-cells/        # index.ts + fragment.glsl
 │   ├── turing-patterns/     # index.ts + compute.glsl + display.glsl
-│   ├── bubble-physics/      # index.ts + background.glsl + bubble.vert + bubble.frag
-│   ├── laser-bird/          # index.ts + scene.glsl + blur.glsl + composite.glsl
+│   ├── bubble-physics/      # Fixed-step dynamics, instanced surfaces and shared water shading
 │   ├── ripple-drop/         # index.ts + display.glsl
-│   ├── stone-break/         # index.ts + rock/inject/crack-compute/analysis/display.glsl
+│   ├── stone-break/         # Shared fracture geometry, meshes and crack animation
+│   ├── searchlights/        # Analytic light transport and occlusion
 │   ├── paper-marbling/      # index.ts + trace.glsl + display.glsl + recipes.ts
 │   └── anime-shaders/       # REFERENCE.md — visual technique reference
 └── shaders/

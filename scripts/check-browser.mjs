@@ -117,15 +117,47 @@ try {
   check((await step(30)).hash !== ringFrames[0], 'Explicit spiral tool renders a different mark');
   await page.screenshot({ path: `${artifacts}/ripple-tools.png` });
 
+  await go('stone-break');
+  const intactStone = await step();
+  await page.mouse.click(600, 300);
+  const struckStone = await step(60);
+  check(struckStone.hash !== intactStone.hash, 'A strike grows visible cracks');
+  for (let i = 0; i < 4; i++) { await page.mouse.click(600, 300); await step(); }
+  const brokenStone = await step(180);
+  check(brokenStone.hash !== struckStone.hash, 'Repeated strikes separate the fragments');
+  await page.getByRole('button', { name: 'Reassemble', exact: true }).click();
+  check((await step(60)).hash === intactStone.hash, 'Reassembly restores the exact intact slab');
+  await page.getByRole('button', { name: 'New stone', exact: true }).click();
+  check((await step()).hash !== intactStone.hash, 'New stone changes the slab');
+
+  await go('bubble-physics');
+  await step(30);
+  await page.getByLabel('Playback', { exact: true }).selectOption('paused');
+  const pausedBubbles = await step();
+  check((await step(5)).hash === pausedBubbles.hash, 'Paused bubbles hold both water and surfaces');
+  await page.getByLabel('Bubble size', { exact: true }).fill('1.6');
+  const largerBubbles = await step();
+  check(largerBubbles.hash !== pausedBubbles.hash, 'Size changes affect existing visible bubbles');
+  await page.getByRole('button', { name: 'Release cluster', exact: true }).click();
+  check((await step()).hash !== largerBubbles.hash, 'Release cluster immediately adds bubbles');
+  await page.getByRole('button', { name: 'New stream', exact: true }).click();
+  const newBubbles = await step();
+  check(newBubbles.hash !== pausedBubbles.hash, 'New stream generates a new arrangement');
+  check((await step(5)).hash === newBubbles.hash, 'New stream preserves paused playback');
+
   // Navigate all demos in one session: resource teardown and shared UI ownership.
   const ids = await page.locator('#demo-select option').evaluateAll(options => options.map(option => option.value));
+  check(JSON.stringify([...ids].sort()) === JSON.stringify([
+    'bubble-physics', 'paper-marbling', 'ripple-drop', 'sea-melt', 'searchlights',
+    'stone-break', 'turing-patterns', 'wobbly-cells',
+  ]), 'Gallery contains the eight retained/replacement demos');
   for (const id of [...ids, 'wobbly-cells']) {
     await page.locator('#demo-select').selectOption(id);
     await page.waitForFunction(value => location.hash === `#${value}`, id);
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
     const frame = await step(2);
     check(frame.error === 0, `${id} renders without a WebGL error`);
-    check(await page.locator('.param-panel').count() === (id === 'bubble-physics' ? 0 : 1), `${id} cleans up the previous panel`);
+    check(await page.locator('.param-panel').count() === 1, `${id} cleans up the previous panel`);
   }
   await page.evaluate(() => { location.hash = '__proto__'; });
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
@@ -148,6 +180,22 @@ try {
   await page.screenshot({ path: `${artifacts}/mobile-tools.png` });
   await page.getByRole('button', { name: 'Hide interface', exact: true }).click();
   check(await page.getByRole('button', { name: 'Show controls', exact: true }).isVisible(), 'Mobile retains a touch restore control');
+  for (const id of ['stone-break', 'searchlights', 'bubble-physics']) {
+    await go(id);
+    const frame = await step(3);
+    check(frame.error === 0, `${id} renders on a portrait canvas`);
+    check(await page.locator('#garden-drawer').isHidden(), `${id} starts unobstructed on mobile`);
+    await page.screenshot({ path: `${artifacts}/mobile-${id}.png` });
+  }
+  for (const retired of ['laser-bird', 'glass-water']) {
+    await go(retired);
+    await step();
+    check(await page.locator('#demo-select').inputValue() === 'wobbly-cells', `${retired} bookmark returns to the gallery`);
+    check(new URL(page.url()).hash === '#wobbly-cells', `${retired} bookmark is normalized`);
+  }
+  await go('lighthouse-vigil');
+  check(await page.locator('#demo-select').inputValue() === 'searchlights', 'Former lighthouse bookmark opens Searchlights');
+  check(new URL(page.url()).hash === '#searchlights', 'Former lighthouse bookmark is normalized');
   check(errors.length === 0, `No browser errors: ${errors.join('; ')}`);
   console.log(JSON.stringify({ assertions, demos: ids.length, renderer: 'Chromium / SwiftShader', artifacts }, null, 2));
 } finally {

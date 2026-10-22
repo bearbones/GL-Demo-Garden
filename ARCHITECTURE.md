@@ -1,6 +1,6 @@
 # Architecture
 
-This document covers the engine internals, the plugin lifecycle, the two rendering patterns used by the demos, the shader library, and how to author a new plugin.
+This document covers the engine internals, the plugin lifecycle, the demos' rendering patterns, the shader library, and how to author a new plugin.
 
 ---
 
@@ -68,11 +68,11 @@ interface Plugin {
 
 ## Rendering Patterns
 
-Two patterns cover all current demos.
+The demos use fullscreen analytic shaders, ping-pong simulation, and explicit geometry or instancing. Paper Marbling additionally uses ordered inverse-map replay, described below.
 
 ### Pattern A — Single-Pass Fragment Shader
 
-Used by: **Wobbly Cells**, **Sea Melt**, **Glass Water**, **Ripple Drop**, **Lighthouse Vigil**, and as the display pass in multi-pass demos.
+Used by: **Wobbly Cells**, **Sea Melt**, **Ripple Drop**, **Searchlights**, and as the display pass in multi-pass demos.
 
 Base class: `src/plugin/FragmentShaderPlugin.ts`
 
@@ -103,7 +103,7 @@ Vertices 0/1/2 produce UVs (0,0), (2,0), (0,2) — a single triangle that over-c
 
 ### Pattern B — Ping-Pong Compute
 
-Used by: **Turing Patterns**, **Laser Bird** (for bloom blur), **Stone Break** (crack propagation).
+Used by: **Turing Patterns** for reaction-diffusion.
 
 `src/plugin/PingPongFBO.ts` maintains two `RGBA16F` framebuffers (half-float, requiring `EXT_color_buffer_float`). Each frame:
 
@@ -268,68 +268,19 @@ The shader rejects pixels outside each ripple's largest possible footprint, then
 
 The pond itself is flat gouache: a tonal gradient with soft `fbm` blotches, a sky-reflection patch, and a gentle edge vignette. When the Rain slider is up, thin falling streak dashes are composited at low alpha.
 
-### Laser Bird
+### Stone Break
 
-Modeled on the light-being apparition in *Windaria* (1986): a creature of pure light — white-hot core, hot-pink body glow, deep red-magenta fringe — rendered with the airbrushed "transmitted light" look of backlit cels. No outlines, no interior detail; the glow is the drawing.
+A framed slab uses one coarse polygon partition. Each internal boundary is stored once, including its irregular contour, and is shared by the two adjacent fragments and the crack overlay. The visible seams and detached edges therefore come from the same geometry; there is no independent shatter map or display-only jitter.
 
-Three render passes:
+Strikes reveal and extend nearby seams. Crack growth uses elapsed time; completion reveals the shared network before the pieces separate. The slab can be reassembled or regenerated. Fragment size, seam character, material and strike strength are artistic controls over this single model, rather than switches between incompatible fracture solvers.
 
-1. **Scene pass** → FBO A: the creature as an SDF, shaded as pure light. The bird is built from tapered-thickness quadratic beziers (`sdBezier`, which returns the curve parameter of the closest point so ribbon strokes can taper to the wing tip): two up-swept crescent wings with a carved underside, a slim body with head nub, and a thin swaying beam-tail trailing to the source. A **Form slider morphs the SDF continuously between the bird and a swallowtail butterfly** (the original demo's shape, preserved) — SDFs interpolate cleanly, so mid-morph states stay coherent light-shapes. The interior white ramp is depth-normalized per form so the thick-winged butterfly doesn't white out. Edges waver and brightness flickers on a quantized boil clock (8 Hz), like hand-airbrushed cels repainted frame to frame.
-2. **Blur pass** → FBO B: multi-pass separable Gaussian blur at half resolution, with the kernel normalized to unity (the raw 15-tap weights sum to ~0.803; unnormalized, each pass dims the bloom ~20% and seven passes lose ~80% of the glow energy).
-3. **Composite pass** → screen: starfield sky + scene + bloom, with the wide fringe shifted toward warm red to mimic 80s multi-exposure color temperature drift. Chunky glowing **petals** (rotated squashed-ellipse blobs, like the rose petals swirling in the reference) orbit and rise around the creature, tumbling as they drift and flickering on the boil clock.
+This is a stylized geometric fracture model, not a continuum stress simulation. Geometry checks cover partition area, shared edges and triangulation across multiple seeds and aspect ratios. Browser checks cover the strike, break and reassembly cycle; visual inspection establishes whether the separation reads well.
 
-### Stone Break (Fracture Propagation)
+### Searchlights
 
-A slab of procedurally generated rock fills the canvas. Tapping strikes it: cracks spiderweb out from the strike point, repeated taps deepen and extend the network, and once the cracks run deep and reach most of the way across the screen the slab shatters along them and the pieces fall away, revealing a fresh slab.
+Searchlights replaces the illustrated lighthouse scene with an abstract optical chamber: one to three beams, drifting haze and simple blockers. It is a 2D light-transport study. The geometry that draws the circles and slats is also used for source-to-sample obstruction tests, so visible forms and their shadows agree.
 
-Four switchable fracture models all write into the same damage field, so the display, burst, break-analysis, and shatter pipeline below is shared:
-
-1. **Voronoi Faults** (default, detailed below) — quenched cellular fault network + energy flooding.
-2. **Stress Field** — a second ping-pong buffer relaxes a scalar stress potential (`stress-relax.glsl`): the strike clamps a source disk toward 1, cracked texels ground it to 0 (a crack is a free surface), and the slab's frame holds an ambient stress so long cracks feed on stored energy (Griffith-style). Damage yields stochastically where the squared potential gradient beats an fbm-heterogeneous toughness, with probability ∝ excess² — dielectric-breakdown-style sparse growth, so the strongest-driven tips win. Produces dense fractal crazing that spreads from the strike.
-3. **Weibull Bonds** — same potential solver, but growth is a random-fuse model: texels adjacent to the crack break outright when the gradient beats their quenched Weibull-distributed strength, and every strike fatigues the slab (subcritical crack growth), pushing the near-critical front further. Produces jagged dendritic breakdown; the Strength/Scatter sliders walk the percolation transition between arrest and flood.
-4. **Fracture Modes** — inspired by Sellán et al., *Breaking Good* (TOG 2022): at bake time, Dijkstra finds the K cheapest paths across a seeded toughness grid (overlap-penalized for diversity) — the slab's intrinsic ways to break. Paths are generated sequentially with **crack arrest**: a later path terminates the moment it meets an older one, bridged exactly onto the older crack's polyline — the T-junction hierarchy of real crack networks (mud cracks, crazing). Each path gets a deterministic Brownian-bridge midpoint displacement plus **recursive** Brownian-walk branches — acute (16–35°), forward-biased, gently arcing, nesting up to three levels and thinning as they go (all seeded, so restamps align). Strikes *reveal* the nearest path outward from the strike (`stamp-segments.glsl` draws capsule segments), and the strike point matters locally: each strike adds a Gaussian depth bump where it projects onto the crack (hammering one spot visibly deepens and widens the line there), and branches grow with proximity weighting — the thicket sprouts around the strike while distant branches barely creep. Pottery-style: a few long crackly lines that pre-exist the first tap. No standing per-frame simulation.
-
-   Strike response is distance-banded. Landing on a fault opens it fully and counts one full strike toward the **Taps to Break** slider (per-strike reveal run and depth bump scale as ~1/T, and the slab shatters deterministically on the T-th effective strike). Landing *sort of near* a fault opens it just a little (0.4 strike credit) and also scuffs the surface. A clean miss only scuffs: a restrained burst of the Stress Field model's crazing, confined to a disk around the tap, run synchronously on the tap frame (plus a small fixed cycle budget) so it forms with the impact shake — and scuff damage never counts toward the break.
-
-   This model also shatters differently: at the break moment every struck crack *snaps* — its reveal completes through the whole slab during the burst beat, and an arrested crack drags its parent fault (recursively) into the failure so the partition always closes — and the pieces are exactly the regions those cracks enclose. A CPU flood fill (`buildRegionMap`) rasterizes the completed polylines as walls on a fine grid, labels the connected regions, absorbs wall cells and slivers into their largest neighbours, and uploads the result as an `R8` piece-id texture; the display shader's piece-membership test becomes a single texture fetch instead of the Voronoi scan. Shard spin scales inversely with area — big slabs turn lazily, chips tumble. One revealed crack yields two clean halves.
-
-**Rock slabs** are baked once per rock (never per frame) from a seeded shader into an RGBA8 texture. Three pattern families — speckled igneous, banded sedimentary, veined crystalline — each with three palettes, give nine mineral looks chosen by hashing the seed. Two slabs exist at any time: the current one and the one revealed on shatter.
-
-**Crack propagation** is a ping-pong compute field at half resolution (R = crack depth, G = live fracture energy). A tap splats energy plus a few noise-broken radial spokes of immediate damage. Each compute step (6/frame), every pixel takes the strongest energy in its 8-neighbourhood minus a travel cost derived from two F2−F1 cellular (Voronoi-edge) distance fields, whose zero sets are straight segments meeting at sharp junctions:
-
-- **Primary faults**: huge cells, so the borders form long lines reaching across the screen. The lookup space is domain-warped by a random offset field with *linear* (deliberately unsmoothed) bilinear interpolation on a rotated grid: the warp is continuous — so the fault line never tears or shears sideways — but its gradient jumps at every grid cell, kinking the line's heading every ~50 px. That is the jittery-angular geometry of a real sidewalk crack. Depth here is uncapped; these are the cracks that deepen, widen, ember, and finally split the slab.
-
-  Four sliders expose the fault geometry. **Kink Angle** sets the heading jitter per kink (warp amplitude is normalized by frequency — `tan(angle)/freq` — so the two controls don't interact) and **Kink Freq** sets how often the line kinks. **Branch Angle** applies an anisotropic squash to the Voronoi lookup space along a per-slab axis: isotropic cells give the classic ~120° Y-junctions, while elongated cells make side branches leave the through-line at acuter angles. **Branch Freq** is the cell density, i.e. how far a crack runs between junctions.
-- **Web**: a fine field whose valleys carry a cost floor, so tap energy only floods it for a short radius — thin spiderweb crackle around the strike point. Web depth saturates below every threshold that matters (deep-crack analysis, ember, light shafts, conduction), so repeated strikes can't chew the web into a hole.
-
-Damage is only recorded along fault valleys — solid rock conducts energy near the impact but doesn't scar, keeping cracks as lines instead of blobs. Strike-local damage (crater + spokes) saturates at a fixed cap for the same reason.
-
-Repeat taps grow the long cracks rather than the crackle, via two conduction rules keyed to a depth only primary cracks and spokes exceed: deep cracks cost ~10× less to traverse, and — the important one — they nearly eliminate the per-step energy decay (0.995 vs 0.972 in rock). Rock decay caps how far one tap can grow a fresh crack, while conduits deliver the next tap's energy to the far tips almost intact, so every strike on a cracked slab visibly lengthens and branches the existing network. If a strike lands far from any fault and progress stalls, tap energy escalates ("working the stone") until it couples.
-
-**Break detection** runs every 10 frames while energy is live: a 64×40 analysis pass supersamples the crack field (6×6 per cell — cracks are thin, point sampling would miss them) and is read back with `readPixels`. The CPU computes deep-crack coverage, max depth, and the bounding-box span of the cracked region. The slab breaks only when the network spans ~85% of the screen in some axis *and* enough of it runs deep; the min of those scores is `breakProgress`.
-
-**Near the break point** (`breakProgress` > 0.6), each tap fires a half-second burst of light shafts: the display shader marches from every pixel toward the strike, accumulating emission from deep cracks along the ray — god rays anchored to the actual crack shapes — while camera shake (a decaying UV offset of summed sines) scales up with `breakProgress`. Crossing the threshold fires one violent burst, then after a 0.4 s beat the slab shatters.
-
-**Shatter** splits the screen into 12 jittered-Voronoi pieces. Seeds are nudged toward the *least-cracked* analysis cells nearby, which pulls Voronoi boundaries onto the crack seams (boundaries fall midway between seeds). Each piece is a rigid body on the CPU — radial impulse from the strike, gravity, spin — and the display shader inverse-transforms each pixel per piece to decide membership and sample the old slab (crack scars included), revealing the fresh slab behind. After the fall the textures swap, a new "next" slab is baked, and the crack field is cleared.
-
-### Lighthouse Vigil (Cel-Shaded Night Seascape)
-
-A passive, single-pass scene: a striped lighthouse on a craggy headland sweeps its beam across a moonlit sea while a small sailboat rocks on the swell below. Everything is analytic — SDF geometry, heightfield rock, quantized lighting — with no simulation state.
-
-Two light sources drive the whole image, in deliberate opposition:
-
-- **The beam** (warm gold, primary). The lens is tilted down a small angle ε and rotates a *full circle* in the horizontal plane; the shader projects its 3D direction to the screen as `atan(−sin ε, cos φ · cos ε)`. That axis is near-level while the beam points sideways, then steepens and passes *continuously through straight-down* at the near transit — apparent angular speed peaking mid-transit, the way a real light reads — so each rotation the beam sweeps down across the near water and rakes the boat with no frozen or skipped arc. The projected direction alone is front/back symmetric (rendered symmetrically it reads as an oscillating searchlight), so the two halves of the orbit are treated asymmetrically on `sin φ`: the **near half** blows up in apparent width (`1 / |cos φ|`), fires the flash term (`(1−|cos φ|)⁶`) and the lantern flare, and passes in front of the clouds; the **far half** — the beam receding behind the tower — is foreshortened to a thin, dim, horizon-hugging pass with tighter falloff, no flash, a slightly dimmed lantern-room glow, and occlusion by the cloud layer. The asymmetry is what makes the rotation read as a circle. The volumetric wedge is shaped by angular smoothsteps around the axis, textured by drifting fbm fog and radial streak noise, occluded by the cliff and tower masks, and mirrored (with noise-wobbled x) below the waterline as its reflection.
-- **The moon** (cool silver, secondary). A disc with posterized maria, a soft Lorentzian halo, and a glitter path of thresholded noise dashes on the water. Surfaces take moonlight as cel bands: the cliff is an implicit heightfield `y − h(x + fbm)` whose finite-difference normal is dotted with the moon direction and quantized to three silver steps — the craggy left-facing faces catch the light while the rest stays near-black. The boat gets the same treatment (two bands plus a hard rim step on moon-facing silhouette edges), and the tower is shaded as a pseudo-cylinder: a three-step terminator rolls from the moonlit left side into core shadow on the right, with a silver edge highlight just inside the lit rim.
-
-Clouds are two domain-warped fbm layers posterized into hard-edged shapes with darker cores; the thin band between the coverage and core thresholds is a lining that silvers strongly near the moon, and any cloud the beam is currently crossing picks up a warm interior glow — so the sweep reads against the sky, not just against empty air. Stars hide behind cloud cover.
-
-Draw order grounds the lighthouse: the tower (with lit keeper's windows, gallery railing, and warm lantern underglow) is composited *before* the cliff, its base buried below the crest line, so the rock's noisy silhouette and ink outline occlude it and it rises from behind the headland instead of floating on top. The tower also casts a moon-shadow band across the plateau.
-
-The boat is a gaff schooner built as a rigid SDF assembly: a long low hull (anisotropically scaled circle ∩ a sheer line rising toward the bow) with a muted sheer stripe, boot-top, pale deck-edge cap, and a low deckhouse with a warm cabin porthole; a tall mainmast aft and shorter foremast with booms and gaff spars; two quadrilateral gaff sails and a jib flown from a bowsprit. Sails are not flat cutouts: each straight-edged base shape (min of triangles) is inflated by a smooth dome — most at mid-leech, none at the luff — so the leech and foot bow outward like filled canvas, and each sail carries a local (u, v) chart used to shade it as a billowed membrane with an implied depth normal, so both light sources roll smoothly over the curve instead of stepping between facets. The whole assembly is evaluated in a rocking frame — roll and heave are summed sines scaled by the Swell slider — so the hull genuinely pitches on the water rather than translating. The lighthouse sits behind and to the right of the boat, and the shading respects that: beam light lands only as a hot rim on lighthouse-facing silhouette edges (SDF-normal gated) plus a translucent glow through the canvas whenever the volumetric beam crosses the sails — never as a frontal fill — while moonlight supplies a cool two-band fill and silver rim. Canvas gets interior modelling (lighter aloft, a soft belly shadow, faint seams) so the sails read as cloth instead of flat cutouts. The reflection mirrors only hull and masts about the waterline — a mirrored sail reads as a detached blob rather than a reflection.
-
-The water avoids flat-fill light pools: swell bands are perspective-compressed fbm quantized to four steps, and the beam's surface term is multiplied by `band²`, so incoming light brightens the quantized crests it lands on instead of overlaying a smooth gradient. Ink outlines (thin `|SDF|` strokes) edge the cliff, tower, and boat; foam dashes break at the cliff base and hull waterline.
-
-Sliders: beam rotation speed, beam angular width, swell amplitude (chop + boat rocking), and haze (volumetric gain).
+A distance-based finite-aperture approximation softens the shadow edges. Haze, sparse dust and exposure rolloff give the beams structure; they do not constitute a 3D volumetric solver. Dragging aims the lights, and automatic sweeping can be restored. Controls expose beam count/width, sweep, haze, blocker layout, palette and playback.
 
 ### Paper Marbling (Ebru / Suminagashi)
 
@@ -355,41 +306,13 @@ The per-frame strip is budgeted against the display's refresh interval (the shor
 
 Controls: Tool (stylus, straight-locked comb with axis snapping, sprinkle drops), Pattern, Palette, Drop Size, Drag (κ), Rod Size, Comb Spacing; Spatter (merges into a playing pattern), Print, Clear.
 
-### Boat Wake (Kelvin Wake + Foam Advection)
-
-A Kelvin wake is bounded by a **19.47° half-angle** regardless of boat speed (a consequence of deep-water wave dispersion). The simulation uses this angle to define an emission mask: foam is injected into the ping-pong FBO at positions within the Kelvin envelope behind the boat.
-
-The foam field is advected (moved) and diffused each frame using a simple advection-diffusion step:
-
-```glsl
-vec2 velocity = wakeVelocityField(uv);
-float prev = texture(u_foam, uv - velocity * dt).r;
-float diffused = blur5(u_foam, uv);  // 5-tap separable
-float next = mix(prev, diffused, 0.3) * decay;
-```
-
-The display shader reads foam density, then applies `inkStroke()` on the gradient and `posterize()` on the foam body to achieve the ukiyo-e woodblock aesthetic — bold flat-colour wave areas separated by dark ink outlines.
-
 ### Bubble Physics
 
-CPU particle simulation with instanced GPU rendering. Up to 600 bubbles rise from the bottom under a force-accumulator model:
+Underwater air bubbles use a CPU simulation and instanced GPU quads. Position, velocity and contact response advance on a fixed timestep, with interpolation for drawing. World units follow canvas height instead of backing pixels, so the same settings retain their scale on high-DPI displays.
 
-- **Buoyancy** (180 px/s²) is the dominant upward force.
-- **Linear drag** (`F = -1.2·v`) gives a terminal rise velocity around 150 px/s.
-- **Wobble**: per-bubble phased sinusoid adds lateral scatter.
-- **Cohesion / separation**: O(n²) neighbour pass (early-out by squared distance) applies soft attraction in the near band and stiff separation on overlap, plus relative-velocity damping on contact so knocks don't fling clusters apart.
-- **Cursor circle** (tap-and-hold): an adhesion force (110 px/s²) attracts bubbles toward the surface within 12 px, and a stiff interior wall (2000 px/s²) keeps them outside. Because adhesion < buoyancy, bubbles only linger where adhesion aligns with buoyancy — at the bottom pole. On the sides and top, buoyancy wins and they slip past. A rising bubble striking clingers transfers momentum via the separation impulse; cohesion damping resettles the cluster.
+Bubbles have radius-dependent rise and drag, share one spatial flow field, and deform in response to motion and contact. The pointer disturbs that flow. Shading emphasizes a thin meniscus, broad crescent reflections and a refracted interior, rather than soap-film iridescence or separate white highlight dots.
 
-Rendering is a single instanced draw of per-bubble quads; the fragment shader draws each bubble as an independent disc with rim light and two specular highlights.
-
-#### Deferred: foam-style flattened contact edges
-
-The current renderer treats each bubble independently, so touching bubbles show two circular boundaries rather than a shared flattened contact line. Adding a soap-foam look requires cross-bubble awareness that a per-instance fragment shader cannot provide in one pass. A future session should implement a two-pass metaball composite:
-
-1. **Density pass**: render each bubble (and the cursor circle) as a radial falloff into an offscreen `RGBA16F` FBO at canvas resolution, using additive blending. The R channel accumulates density.
-2. **Shade pass**: a fullscreen quad samples the density texture and shades pixels where `density > threshold`, using `smoothstep(threshold, threshold + edgeWidth, density)` for antialiased edges. A surface normal derived from `dFdx`/`dFdy` of density drives rim light and specular. Where two bubbles overlap, summed densities cross the threshold between their centres, producing the flattened shared edge; isolated bubbles retain their round silhouette.
-
-Requirements: FBO must be recreated on resize, must match DPR-scaled canvas dimensions. Keep `background.glsl` unchanged and composite bubbles on top. Estimated scope: new `metaball.frag` and `composite.frag`, ~120–180 LOC in the plugin including FBO lifecycle in `init()`/`destroy()`.
+This is a stylized motion model, not a resolved two-phase fluid simulation. Equal-time checks across different frame schedules verify timestep consistency; contact and shape bounds are tested separately. Controls tune flow, rise, bubble size, release rate and playback.
 
 ---
 

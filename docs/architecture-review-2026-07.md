@@ -1,5 +1,7 @@
 # Architecture Review — July 2026
 
+Historical audit of the July gallery. Demo inventory and several implementations have since changed; see the current README and ARCHITECTURE for active behavior.
+
 A full read-through of the engine, all seven plugins, shaders, docs, and deployment
 config. The verdict up front: **the core architecture is sound and appropriately
 sized** — single engine owning the WebGL2 context, a four-method `Plugin` interface,

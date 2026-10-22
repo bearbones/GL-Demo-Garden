@@ -4,11 +4,9 @@ import { WobbyCellsPlugin } from './plugins/wobbly-cells';
 import { TuringPatternsPlugin } from './plugins/turing-patterns';
 import { BubblePhysicsPlugin } from './plugins/bubble-physics';
 import { RippleDropPlugin } from './plugins/ripple-drop';
-import { LaserBirdPlugin } from './plugins/laser-bird';
 import { SeaMeltPlugin } from './plugins/sea-melt';
-import { GlassWaterPlugin } from './plugins/glass-water';
 import { StoneBreakPlugin } from './plugins/stone-break';
-import { LighthouseVigilPlugin } from './plugins/lighthouse-vigil';
+import { SearchlightsPlugin } from './plugins/searchlights';
 import { PaperMarblingPlugin } from './plugins/paper-marbling';
 import './style.css';
 
@@ -17,25 +15,26 @@ const PLUGINS: Record<string, () => Plugin> = {
   'turing-patterns': () => new TuringPatternsPlugin(),
   'bubble-physics': () => new BubblePhysicsPlugin(),
   'ripple-drop': () => new RippleDropPlugin(),
-  'laser-bird': () => new LaserBirdPlugin(),
   'sea-melt': () => new SeaMeltPlugin(),
-  'glass-water': () => new GlassWaterPlugin(),
   'stone-break': () => new StoneBreakPlugin(),
-  'lighthouse-vigil': () => new LighthouseVigilPlugin(),
+  'searchlights': () => new SearchlightsPlugin(),
   'paper-marbling': () => new PaperMarblingPlugin(),
 };
 
 const DEFAULT_ID = 'wobbly-cells';
+const HASH_REDIRECTS: Record<string, string> = {
+  'laser-bird': DEFAULT_ID,
+  'glass-water': DEFAULT_ID,
+  'lighthouse-vigil': 'searchlights',
+};
 const HINTS: Record<string, string> = {
   'wobbly-cells': 'A moving mosaic of soft color and shifting seams.',
   'turing-patterns': 'Grow mazes, coral and spotted patterns from a few painted seeds.',
-  'bubble-physics': 'Drag through the rising bubbles to disturb their flow.',
+  'bubble-physics': 'Stir a column of rising air bubbles and watch them deform in the current.',
   'ripple-drop': 'Tap the pond or trail your finger through it. Each mark opens into a ripple.',
-  'laser-bird': 'Drag to move the luminous silhouette across the scene.',
   'sea-melt': 'A flowing study of sea, foam and color. Adjust the surface below.',
-  'glass-water': 'Layered water contours. Explore the linework and flow below.',
-  'stone-break': 'Tap to strike the stone. Watch cracks grow, then loosen the pieces.',
-  'lighthouse-vigil': 'A sweeping beam over a painted night sea. Tune its width, pace and haze.',
+  'stone-break': 'Strike the slab to open its seams, then reassemble it or choose a new stone.',
+  'searchlights': 'Sweep light through drifting haze. Drag to aim and explore the shadows.',
   'paper-marbling': 'Drop color, draw through the bath, then lift a print.',
 };
 
@@ -62,7 +61,11 @@ select.addEventListener('change', () => {
 let currentId: string | null = null;
 
 function loadFromHash() {
-  const raw = location.hash.slice(1);
+  let raw = location.hash.slice(1);
+  if (Object.prototype.hasOwnProperty.call(HASH_REDIRECTS, raw)) {
+    raw = HASH_REDIRECTS[raw];
+    history.replaceState(null, '', `#${raw}`);
+  }
   // hasOwnProperty guards against inherited keys (#__proto__, #constructor);
   // an unknown hash keeps the running demo instead of resetting it
   const id = Object.prototype.hasOwnProperty.call(PLUGINS, raw)

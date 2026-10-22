@@ -1,29 +1,23 @@
 #version 300 es
-
-// Per-vertex: unit quad corners
-layout(location = 0) in vec2 a_corner;   // (-1,-1) to (1,1)
-
-// Per-instance: bubble data
-layout(location = 1) in vec4 a_bubble;   // (x, y, radius, opacity)  — all in pixels
-
+precision highp float;
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec4 a_bubble; // center, radius, phase; height units
+layout(location = 2) in vec4 a_surface; // deformation tensor, opacity, flex
 uniform vec2 u_resolution;
-
-out vec2 v_local;    // local coordinate within quad (-1 to 1)
-out float v_opacity;
-
+out vec2 v_local;
+out vec2 v_world;
+flat out vec4 v_bubble;
+flat out vec4 v_surface;
 void main() {
-  float x      = a_bubble.x;
-  float y      = a_bubble.y;
-  float radius = a_bubble.z;
-  v_opacity    = a_bubble.w;
-  v_local      = a_corner;
-
-  // Expand quad corner by radius, offset by bubble position
-  vec2 pos = vec2(x, y) + a_corner * (radius + 1.0); // +1 for soft edge
-
-  // Convert pixel coords to clip space (origin top-left → NDC)
-  vec2 ndc = (pos / u_resolution) * 2.0 - 1.0;
-  ndc.y = -ndc.y; // flip Y: pixel y-down → NDC y-up
-
-  gl_Position = vec4(ndc, 0.0, 1.0);
+  float deformation = length(a_surface.xy);
+  float stretch = exp(deformation);
+  float angle = deformation > 1e-6 ? 0.5 * atan(a_surface.y, a_surface.x) : 0.0;
+  float c = cos(angle), s = sin(angle);
+  mat2 rotation = mat2(c, s, -s, c);
+  v_local = a_corner * 1.12;
+  v_world = a_bubble.xy + rotation * (v_local * vec2(stretch, 1.0 / stretch)) * a_bubble.z;
+  v_bubble = a_bubble;
+  v_surface = a_surface;
+  vec2 extent = vec2(u_resolution.x / u_resolution.y, 1.0);
+  gl_Position = vec4(v_world / extent * 2.0 - 1.0, 0.0, 1.0);
 }

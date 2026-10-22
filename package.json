@@ -8,6 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test:cells": "node scripts/check-cells.mjs",
+    "test:stone": "node scripts/check-stone.mjs",
+    "test:bubbles": "node scripts/check-bubbles.mjs",
+    "test:searchlights": "npm run build && node scripts/check-searchlights.mjs",
     "test:browser": "npm run build && node scripts/check-browser.mjs"
   },
   "devDependencies": {

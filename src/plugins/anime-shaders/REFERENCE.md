@@ -1,6 +1,6 @@
 # Anime Shader Effects — Windaria-Inspired Reference
 
-This document records the visual, physical, and aesthetic reasoning behind each demo effect. It is intended both as an artistic reference and as a technical rationale for shader design decisions. For implementation details see [ARCHITECTURE.md](../../ARCHITECTURE.md).
+This document collects historical visual research and shader ideas, including experiments that have since been retired. It is not an inventory of the current demos. It is intended both as an artistic reference and as a technical rationale for shader design decisions. For implementation details see [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 ## 80s Anime Production Context
 
@@ -129,7 +129,9 @@ Turing-like organic branching patterns appear in nature (coral, slime mould, ner
 
 ---
 
-## Bubble Physics
+## Bubble Visual Research
+
+The current Bubble Physics demo depicts air rising through water. Its shading emphasizes reflected and refracted water light; the soap-film notes below are historical reference, not its optical model.
 
 ### Real Optics: Thin-Film Interference
 
