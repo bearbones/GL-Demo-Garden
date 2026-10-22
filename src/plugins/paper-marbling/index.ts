@@ -716,7 +716,10 @@ export class PaperMarblingPlugin implements Plugin {
     const remaining = b.dst.h - b.row;
     const wanted = Math.floor(budget / (b.dst.w * cost));
     this.lastStripLimited = wanted < remaining;
-    const rows = Math.min(remaining, Math.max(Math.ceil(b.dst.h / BAKE_MAX_FRAMES), wanted, 1));
+    // The wide pre-flatten bake is several screens of work and nothing waits
+    // on it, so it gets a gentler completion floor
+    const maxFrames = b.dst.wide ? BAKE_MAX_FRAMES * 4 : BAKE_MAX_FRAMES;
+    const rows = Math.min(remaining, Math.max(Math.ceil(b.dst.h / maxFrames), wanted, 1));
 
     this.uploadOps(gl); // a flatten above may have shifted the op list
     gl.bindFramebuffer(gl.FRAMEBUFFER, b.dst.fbo);
