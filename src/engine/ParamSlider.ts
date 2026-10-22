@@ -47,13 +47,15 @@ export class ParamSlider {
     input.value = String(config.value);
     input.style.cssText = 'flex:1;accent-color:#8af;height:4px;cursor:pointer;';
 
+    // Enough decimals to show every step (0.005 → 3), never fewer than 2
+    const decimals = config.step ? Math.max(2, Math.min(4, Math.ceil(-Math.log10(config.step) - 1e-9))) : 2;
     const valueLabel = document.createElement('span');
-    valueLabel.textContent = config.value.toFixed(2);
+    valueLabel.textContent = config.value.toFixed(decimals);
     valueLabel.style.cssText = 'flex:0 0 42px;text-align:left;font-variant-numeric:tabular-nums;opacity:0.6;';
 
     input.addEventListener('input', () => {
       const v = parseFloat(input.value);
-      valueLabel.textContent = v.toFixed(2);
+      valueLabel.textContent = v.toFixed(decimals);
       config.onChange(v);
     });
 
@@ -72,7 +74,7 @@ export class ParamSlider {
     options: { value: string; label: string }[];
     value: string;
     onChange: (value: string) => void;
-  }) {
+  }): HTMLSelectElement {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
 
@@ -95,6 +97,27 @@ export class ParamSlider {
     row.appendChild(label);
     row.appendChild(select);
     this.panel.appendChild(row);
+    return select;
+  }
+
+  /** A row of push buttons, for one-shot actions (e.g. reset). */
+  addButtons(buttons: { label: string; onClick: () => void }[]) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
+    for (const config of buttons) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = config.label;
+      button.style.cssText =
+        'flex:1;background:#232329;color:#eee;border:1px solid #3a3a42;border-radius:6px;padding:4px 8px;font:inherit;cursor:pointer;';
+      button.addEventListener('click', config.onClick);
+      row.appendChild(button);
+    }
+    this.panel.appendChild(row);
+  }
+
+  setVisible(visible: boolean) {
+    this.panel.style.display = visible ? '' : 'none';
   }
 
   getValue(label: string): number {

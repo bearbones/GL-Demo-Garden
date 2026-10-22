@@ -14,6 +14,7 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 | **Boat Wake** | Kelvin wake foam advection | Passive; foam trails behind boat |
 | **Stone Break** | Procedural rock fracture — four switchable models: Voronoi faults, phase-field-style stress damage, Weibull random-fuse breakdown, and Breaking-Good-style precomputed fracture modes | Tap to crack; repeated taps deepen and extend the network until the slab shatters and falls away. Model dropdown + per-model tuning sliders |
 | **Lighthouse Vigil** | Cel-shaded night seascape: rotating lighthouse beam over a rocking sailboat, moonlit cliff and posterized water | Passive; sliders for beam speed/width, swell, and haze |
+| **Paper Marbling** | Ebru / suminagashi: paint floating on a size bath. Drops push older paint into rings; a stylus or comb drags it into hearts, chevrons, and feathers. Exact backward replay of invertible ops, so combed edges never blur | Tap to drop paint; drag to pull the stylus (or a straight comb, or sprinkle drops). Pattern menu plays the classics (Bullseyes, Stone, Gel-gel, Chevron, Nonpareil, Bouquet, Suminagashi); Print lays paper on the bath |
 
 Navigate between demos using the dropdown in the top bar, or by setting the URL hash directly:
 
@@ -66,6 +67,7 @@ src/
 │   ├── laser-bird/          # index.ts + scene.glsl + blur.glsl + composite.glsl
 │   ├── ripple-drop/         # index.ts + display.glsl
 │   ├── stone-break/         # index.ts + rock/inject/crack-compute/analysis/display.glsl
+│   ├── paper-marbling/      # index.ts + trace.glsl + display.glsl + recipes.ts
 │   └── anime-shaders/       # REFERENCE.md — visual technique reference
 └── shaders/
     ├── fullscreen-quad.vert # Clip-space triangle via gl_VertexID (no VBO needed)

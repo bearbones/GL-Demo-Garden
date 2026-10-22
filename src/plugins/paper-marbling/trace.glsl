@@ -1,0 +1,369 @@
+#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+
+// ── Backward replay of the marbling op list ──────────────────────────
+// Every op (ink drop, stylus/comb stroke, swirl) is an exactly invertible map of
+// the bath. A pixel is traced newest → oldest through the inverse maps; the
+// first drop whose disk contains the traced point is the paint it shows.
+// Nothing is ever resampled, so edges stay knife-sharp however hard the
+// paint is combed. The same pass renders the live paint layer (ops newer
+// than the bake, then the bake texture) and the progressive bake strips.
+
+#include "../../shaders/lib/noise.glsl"
+
+in vec2 v_uv;
+out vec4 fragColor;
+
+const int OPS_PER_ROW = 512; // must match index.ts
+
+uniform sampler2D u_ops;      // RGBA32F, 3 texels per op
+uniform int u_opEnd;          // trace ops [0, u_opEnd)
+uniform int u_bakeCount;      // ops [0, u_bakeCount) are cached in u_bake
+uniform sampler2D u_bake;     // premultiplied paint after u_bakeCount ops
+uniform vec4 u_bakeRect;      // bath rect covered by u_bake (xy min, zw size)
+uniform sampler2D u_flat;     // flattened paint from before op 0
+uniform vec4 u_flatRect;      // zw = 0 when there is no flattened layer
+uniform vec4 u_targetRect;    // bath rect this pass renders
+uniform float u_pxPerBU;      // target pixels per bath unit
+uniform float u_time;
+uniform bool u_superSample;   // bake pass: re-trace detailed pixels 4 more times
+
+// Stylus shape, in units of the op's rod size (must match index.ts)
+const float ALONG = 2.6;    // along-path drag length α (sets pull distance)
+const float ROUND = 0.8;    // rounding of the chevron tip
+const float FALL = 3.0;     // cross-path falloff length, unless the op sets one
+const float SUPPORT = 7.0;  // cross-path support, in falloff lengths
+
+const float RIM = 0.09;     // darkening of the denser pigment rim
+
+vec4 opTexel(int i, int j) {
+  return texelFetch(u_ops, ivec2((i % OPS_PER_ROW) * 3 + j, i / OPS_PER_ROW), 0);
+}
+
+bool inRect(vec4 rect, vec2 p) {
+  vec2 uv = (p - rect.xy) / rect.zw;
+  return all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+}
+
+vec4 sampleRect(sampler2D s, vec4 rect, vec2 p) {
+  return textureLod(s, (p - rect.xy) / rect.zw, 0.0);
+}
+
+// Drops land small and spread: radius eases out over the spread time
+float dropRadius(float R, float birth, float spread) {
+  float u = clamp((u_time - birth) / spread, 0.0, 1.0);
+  float v = 1.0 - u;
+  return R * (1.0 - v * v * v);
+}
+
+// Rim weight in [0.25, 1] at the drop's edge: a thin rim band fades toward
+// its average before it would alias
+float rimFade(float R, float edgeGrad) {
+  float bandPx = 0.2 * R * u_pxPerBU / max(edgeGrad, 1e-6);
+  return smoothstep(0.75, 2.5, bandPx);
+}
+
+// ── Paint shading ─────────────────────────────────────────────────────
+// Shading is evaluated in the drop's birth frame, so the pigment mottle and
+// the denser rim stretch and comb with the paint. `edgeGrad` is the screen
+// gradient of the radial coordinate and `stretch` the Jacobian norm; both
+// fade detail out before it would alias.
+// Pale paint shows relative variation more; scale it back so every colour
+// carries about the same visible texture
+float lightFade(vec3 col) {
+  return mix(1.0, 0.45, dot(col, vec3(0.3, 0.59, 0.11)));
+}
+
+vec4 shadeDrop(vec3 col, float alpha, float seed, vec2 local, float R, float edgeGrad, float stretch) {
+  float rho = length(local);
+  float fade = lightFade(col);
+  // Pigment piles up slightly at the spreading front: a darker rim band
+  float rim = mix(0.25, smoothstep(0.8, 1.0, rho), rimFade(R, edgeGrad));
+  col *= 1.0 - RIM * fade * rim;
+  // Uneven pigment: low mottle plus fine grain, faded when compressed
+  float cyclesPerPx = stretch / (R * u_pxPerBU);
+  float m1 = snoise(local * 1.6 + seed * 31.7) * (1.0 - smoothstep(0.08, 0.25, cyclesPerPx * 1.6));
+  float m2 = snoise(local * 5.5 + seed * 17.3) * (1.0 - smoothstep(0.08, 0.25, cyclesPerPx * 5.5));
+  col *= 1.0 + (0.045 * m1 + 0.025 * m2) * fade;
+  return vec4(col * alpha, alpha);
+}
+
+// ── Stylus / comb stroke ──────────────────────────────────────────────
+// Each tine slides paint along lines parallel to its motion. On a line at
+// offset h the paint moves at κ(h)·sech²(ξ/α) of the rod speed, ξ being its
+// position relative to the rod. That 1D flow integrates in closed form:
+//   G(ξ) = ξ + α s atan(s tanh(ξ/α)),  s = √(κ/(1−κ)),
+// and a rod moving 0 → L maps the final relative position ξ₁ to the initial
+// ξ₀ = G⁻¹(G(ξ₁) + L). The map is a bijection for any L, so a whole straight
+// stroke is one op, and splitting a stroke in two composes exactly.
+
+float tanhSafe(float x) {
+  float e = exp(-2.0 * abs(x));
+  return sign(x) * (1.0 - e) / (1.0 + e);
+}
+
+float flowG(float x, float s, float a) {
+  return x + a * s * atan(s * tanhSafe(x / a));
+}
+
+// 1 / G'(ξ) = 1 − κ sech²(ξ/α)
+float flowInvGp(float x, float k, float a) {
+  float T = tanhSafe(x / a);
+  return 1.0 - k * (1.0 - T * T);
+}
+
+// ∂G/∂κ, for the cross-path Jacobian term
+float flowGk(float x, float k, float s, float a) {
+  float sT = s * tanhSafe(x / a);
+  float sk = 0.5 / (s * (1.0 - k) * (1.0 - k));
+  return a * sk * (atan(sT) + sT / (1.0 + sT * sT));
+}
+
+// G⁻¹ by Newton. G is odd and concave on ξ ≥ 0, so starting left of the
+// root (at y − G(∞) offset) converges monotonically.
+float flowGinv(float Y, float k, float s, float a) {
+  float y = abs(Y);
+  float x = max(0.0, y - a * s * atan(s));
+  for (int it = 0; it < 4; ++it) {
+    x -= (flowG(x, s, a) - y) * flowInvGp(x, k, a);
+  }
+  return sign(Y) * x;
+}
+
+// Cross-path strength κ(h): a rounded cusp (pointed chevrons) with smooth
+// cut-off at H so neighbouring comb tines never overlap by more than one.
+vec2 crossProfile(float h, float k0, float rr, float c, float H) {
+  float q = sqrt(h * h + rr * rr);
+  float E = exp(-(q - rr) / c);
+  float e0 = 0.5 * H;
+  float u = clamp((abs(h) - e0) / (H - e0), 0.0, 1.0);
+  float W = 1.0 - u * u * (3.0 - 2.0 * u);
+  float dW = -sign(h) * 6.0 * u * (1.0 - u) / (H - e0);
+  return vec2(k0 * E * W, k0 * E * (-h / (c * q) * W + dW));
+}
+
+void strokeOp(int i, vec4 o0, inout vec2 p, inout mat2 J) {
+  vec4 o1 = opTexel(i, 1);
+  vec4 o2 = opTexel(i, 2);
+  vec2 a = o0.yz;
+  vec2 ab = o1.xy - a;
+  float L = length(ab);
+  if (L < 1e-7) return;
+  vec2 m = ab / L;
+  vec2 nrm = vec2(-m.y, m.x);
+
+  float K = o0.w;          // tine count
+  float spacing = o1.z;
+  float size = o1.w;       // rod size
+  float k0 = o2.z;         // drag at the rod
+  float alpha = ALONG * size;
+  float rr = ROUND * size;
+  float c = o2.w > 0.0 ? o2.w : FALL * size;
+
+  // Tines sit along the comb axis; split each offset into its cross-path
+  // and along-path parts relative to this segment's motion
+  float sigH = spacing * dot(o2.xy, nrm);
+  float sigT = spacing * dot(o2.xy, m);
+  float mid = (K - 1.0) * 0.5;
+
+  vec2 d = p - a;
+  float t = dot(d, m);
+  float reach = 6.0 * alpha + mid * abs(sigT);
+  if (t < -reach || t > L + reach) return;
+  float hc = dot(d, nrm);
+
+  float H = SUPPORT * c;
+  float u = mid;
+  if (K > 1.5) {
+    H = min(H, 0.95 * abs(sigH));
+    u = hc / sigH + mid;
+  }
+  float j0 = clamp(floor(u), 0.0, K - 1.0);
+  float j1 = min(j0 + 1.0, K - 1.0);
+
+  float tCur = t;
+  float dtdt = 1.0;
+  float dtdh = 0.0;
+  bool touched = false;
+
+  // A pass straight across its tines (every user comb, every straight recipe
+  // pass): both nearby tines sweep the same lines in step, so run ONE flow
+  // with the combined drag 1 − (1−κa)(1−κb). It stays below 1 and, unlike
+  // two passes in sequence, composes exactly when the op is split (e.g. by a
+  // drop landing mid-pull).
+  if (abs(sigT) < 1e-6) {
+    if (t < -6.0 * alpha || t > L + 6.0 * alpha) return;
+    vec2 ka = vec2(0.0);
+    vec2 kb = vec2(0.0);
+    float ha = hc - (j0 - mid) * sigH;
+    float hb = hc - (j1 - mid) * sigH;
+    if (abs(ha) < H) ka = crossProfile(ha, k0, rr, c, H);
+    if (j1 != j0 && abs(hb) < H) kb = crossProfile(hb, k0, rr, c, H);
+    float rest = (1.0 - ka.x) * (1.0 - kb.x);
+    float k = 1.0 - rest;
+    if (k < 1e-5) return;
+    float dk = (1.0 - kb.x) * ka.y + (1.0 - ka.x) * kb.y;
+    float s = sqrt(k / rest);
+    float x1 = t - L;
+    float x0 = flowGinv(flowG(x1, s, alpha) + L, k, s, alpha);
+    float igp0 = flowInvGp(x0, k, alpha);
+    dtdt = igp0 / flowInvGp(x1, k, alpha);
+    dtdh = (flowGk(x1, k, s, alpha) - flowGk(x0, k, s, alpha)) * dk * igp0;
+    p += (x0 - t) * m;
+    J = (mat2(1.0) + outerProduct(m, (dtdt - 1.0) * m + dtdh * nrm)) * J;
+    return;
+  }
+
+  // Staggered tines (a sinuous pass): apply them one after the other
+  for (int pass = 0; pass < 2; ++pass) {
+    float j = pass == 0 ? j1 : j0;
+    if (pass == 1 && j0 == j1) break;
+    float o = j - mid;
+    float h = hc - o * sigH;
+    if (abs(h) >= H) continue;
+    float tl = tCur - o * sigT; // along coordinate in this tine's frame
+    if (tl < -6.0 * alpha || tl > L + 6.0 * alpha) continue;
+    vec2 kp = crossProfile(h, k0, rr, c, H);
+    float k = kp.x;
+    if (k < 1e-5) continue;
+    float s = sqrt(k / (1.0 - k));
+    float x1 = tl - L;
+    float x0 = flowGinv(flowG(x1, s, alpha) + L, k, s, alpha);
+    float igp0 = flowInvGp(x0, k, alpha);
+    float fT = igp0 / flowInvGp(x1, k, alpha);
+    float fH = (flowGk(x1, k, s, alpha) - flowGk(x0, k, s, alpha)) * kp.y * igp0;
+    dtdh = fT * dtdh + fH;
+    dtdt = fT * dtdt;
+    tCur = x0 + o * sigT;
+    touched = true;
+  }
+  if (!touched) return;
+  p += (tCur - t) * m;
+  J = (mat2(1.0) + outerProduct(m, (dtdt - 1.0) * m + dtdh * nrm)) * J;
+}
+
+// ── Swirl (breath / fan) ──────────────────────────────────────────────
+// Jaffer's vortex: rotation by an angle that falls off with radius. The
+// radius is unchanged, so it is exactly invertible and area-preserving, and
+// unlike a stylus it has no cusp: soft bends, like breath on suminagashi.
+void swirlOp(int i, vec4 o0, inout vec2 p, inout mat2 J) {
+  vec2 d = p - o0.yz;
+  float s2 = o0.w * o0.w;
+  float r2 = dot(d, d);
+  if (r2 > 9.0 * s2) return;
+  // A swirl split around a newer drop keeps only its share of the turn:
+  // eased progress from o1.w to o2.x (0 → 1 when whole)
+  vec4 o1 = opTexel(i, 1);
+  float e1 = opTexel(i, 2).x;
+  float u = clamp((u_time - o1.x) / o1.y, 0.0, 1.0);
+  float turned = min(u * u * (3.0 - 2.0 * u), e1) - o1.w;
+  float phi = -o1.z * turned * exp(-r2 / s2); // inverse: turn back
+  float cs = cos(phi);
+  float sn = sin(phi);
+  mat2 R = mat2(cs, sn, -sn, cs);
+  // ∂p'/∂d = R(φ)·(I + d⊥ ⊗ ∇φ)
+  J = R * (mat2(1.0) + outerProduct(vec2(-d.y, d.x), -2.0 * phi / s2 * d)) * J;
+  p = o0.yz + R * d;
+}
+
+// Crossed comb passes multiply shears; only the scale of J relative to a
+// pixel matters, so keep it well inside float range
+mat2 renormalize(mat2 J) {
+  float mJ = max(max(abs(J[0].x), abs(J[0].y)), max(abs(J[1].x), abs(J[1].y)));
+  return mJ > 1e12 ? J * (1e12 / mJ) : J;
+}
+
+// Trace one point. `detail` reports how much sub-pixel structure surrounds
+// it: strong compression, or a thin feature with both edges within a pixel.
+vec4 tracePoint(vec2 q, out bool detail) {
+  detail = false;
+  vec2 p = q;
+  mat2 J = mat2(1.0);  // ∂p/∂q: traced position w.r.t. this pixel
+
+  // Every edge in a marbled image is the boundary of some drop, with the
+  // newer drop on one side. Pixels just outside a newer drop remember the
+  // nearest one and blend toward it over a 1 px ramp.
+  float nearPx = 1e6;
+  vec4 nearCol = vec4(0.0);
+  vec4 col = vec4(0.0);
+  float insidePx = 1e6;
+  bool hit = false;
+
+  for (int i = u_opEnd - 1; i >= 0; --i) {
+    // The bake holds the state after u_bakeCount ops, so it can only stand
+    // in for the trace at exactly that point; a point outside it keeps
+    // tracing older ops analytically
+    if (i == u_bakeCount - 1 && inRect(u_bakeRect, p)) {
+      col = sampleRect(u_bake, u_bakeRect, p);
+      hit = true;
+      break;
+    }
+    vec4 o0 = opTexel(i, 0);
+    if (o0.x > 0.5) {
+      if (o0.x > 1.5) swirlOp(i, o0, p, J);
+      else strokeOp(i, o0, p, J);
+      J = renormalize(J);
+      continue;
+    }
+
+    // Ink drop: Jaffer's push p' = c + (p−c)·√(1 + R²/|p−c|²), inverted
+    vec4 o1 = opTexel(i, 1);
+    float R = dropRadius(o0.w, o1.x, o1.w);
+    vec2 cen = o0.yz;
+    vec2 dv = p - cen;
+    float r2 = dot(dv, dv);
+    float R2 = R * R;
+    float r = sqrt(r2);
+    vec2 n = dv / max(r, 1e-9);
+    float edgeGrad = length(n * J);
+    if (r2 <= R2) {
+      vec4 o2 = opTexel(i, 2);
+      float stretch = length(J[0]) + length(J[1]);
+      col = shadeDrop(o2.rgb, o1.z, o1.y, dv / max(R, 1e-6), R, edgeGrad, stretch);
+      insidePx = (R - r) * u_pxPerBU / max(edgeGrad, 1e-9);
+      detail = stretch > 5.0;
+      hit = true;
+      break;
+    }
+    float sPx = (r - R) * u_pxPerBU / max(edgeGrad, 1e-9);
+    if (sPx < nearPx) {
+      nearPx = sPx;
+      vec4 o2 = opTexel(i, 2);
+      float rim = mix(0.25, 1.0, rimFade(R, edgeGrad));
+      nearCol = vec4(o2.rgb * (1.0 - RIM * lightFade(o2.rgb) * rim) * o1.z, o1.z);
+    }
+    float k = sqrt((r2 - R2) / r2);
+    float g = R2 / (k * r2 * r2);
+    J = mat2(k + g * dv.x * dv.x, g * dv.x * dv.y, g * dv.x * dv.y, k + g * dv.y * dv.y) * J;
+    J = renormalize(J);
+    p = cen + dv * k;
+  }
+
+  if (!hit && u_flatRect.z > 0.0 && inRect(u_flatRect, p)) {
+    col = sampleRect(u_flat, u_flatRect, p);
+    detail = length(J[0]) + length(J[1]) > 5.0;
+  }
+  detail = detail || (nearPx < 1.0 && insidePx < 1.0);
+  return mix(col, nearCol, 1.0 - clamp(nearPx, 0.0, 1.0));
+}
+
+void main() {
+  vec2 q = u_targetRect.xy + v_uv * u_targetRect.zw;
+  bool detail = false;
+  vec4 col = tracePoint(q, detail);
+
+  // Sub-pixel veins and combed hairlines alias under one point sample. The
+  // bake is built a strip at a time, so it can afford a rotated-grid
+  // supersample wherever the first trace saw detail.
+  if (u_superSample && detail) {
+    const vec2 RGSS[4] = vec2[4](vec2(0.125, 0.375), vec2(-0.375, 0.125), vec2(0.375, -0.125), vec2(-0.125, -0.375));
+    bool unused;
+    for (int s = 0; s < 4; ++s) {
+      col += tracePoint(q + RGSS[s] / u_pxPerBU, unused);
+    }
+    col *= 0.2;
+  }
+  fragColor = col;
+}
