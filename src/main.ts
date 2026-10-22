@@ -91,6 +91,7 @@ let drawerOpen = !matchMedia('(max-width: 600px)').matches;
 function setDrawer(open: boolean) {
   drawerOpen = open;
   drawer.hidden = !open;
+  ui.classList.toggle('drawer-collapsed', !open);
   drawerToggle.setAttribute('aria-expanded', String(open));
   drawerToggle.querySelector('.toggle-glyph')!.textContent = open ? '−' : '+';
 }

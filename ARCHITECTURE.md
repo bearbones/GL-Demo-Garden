@@ -169,6 +169,8 @@ The slider DOM is removed in `destroy()` via `this.sliders.destroy()`, so it doe
 
 `addSelect`, `addButtons`, `addSection` and `addNote` provide discrete choices, actions and structure. `setValue(label, value, notify = false)` synchronizes a slider and its readout when applying a recipe without recursively invoking its callback. Plugin-specific overlays outside the drawer should use the `demo-overlay` class so the gallery's hide action includes them.
 
+Silver vine ornaments live in `src/ui/ornaments/` as self-contained SVGs. The noninteractive frame belongs to `#garden-ui`, outside the scrolling drawer. Faceted button layers leave the actual hit area and focus outline unclipped; range inputs keep their native interaction and update `--range-fill` with their value. Forced-color mode removes ornamental layers and restores system-color control borders.
+
 ---
 
 ## Shader Library

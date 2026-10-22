@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="28" viewBox="0 0 24 28" fill="none">
+  <title>Faceted amethyst in a silver setting</title>
+  <defs>
+    <linearGradient id="thumb-silver" x1="3" y1="3" x2="21" y2="25" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f5f5ed"/>
+      <stop offset=".22" stop-color="#cbd5dc"/>
+      <stop offset=".48" stop-color="#88919f"/>
+      <stop offset=".7" stop-color="#e8edef"/>
+      <stop offset="1" stop-color="#677180"/>
+    </linearGradient>
+    <linearGradient id="thumb-amethyst" x1="7" y1="6" x2="18" y2="22" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#dcd1ee"/>
+      <stop offset=".5" stop-color="#bdaddb"/>
+      <stop offset="1" stop-color="#726184"/>
+    </linearGradient>
+  </defs>
+  <path d="M12 1.3L20 5.2L22 14L20 22.8L12 26.7L4 22.8L2 14L4 5.2Z" fill="url(#thumb-silver)" stroke="#4b495d" stroke-width=".9" stroke-linejoin="round"/>
+  <path d="M12 3.8L18.2 7L19.7 14L18.2 21L12 24.2L5.8 21L4.3 14L5.8 7Z" fill="url(#thumb-amethyst)" stroke="#777184" stroke-width=".7" stroke-linejoin="round"/>
+  <path d="M12 3.8L18.2 7L14.6 9.5L9.4 9.5L5.8 7Z" fill="#e4daef"/>
+  <path d="M5.8 7L9.4 9.5L8 14L4.3 14Z" fill="#bdaddb"/>
+  <path d="M18.2 7L19.7 14L16 14L14.6 9.5Z" fill="#9684b0"/>
+  <path d="M4.3 14L8 14L9.4 18.5L5.8 21Z" fill="#887397"/>
+  <path d="M19.7 14L18.2 21L14.6 18.5L16 14Z" fill="#c2b4d8"/>
+  <path d="M5.8 21L9.4 18.5L12 24.2Z" fill="#6c607e"/>
+  <path d="M18.2 21L14.6 18.5L12 24.2Z" fill="#9b89b3"/>
+  <path d="M9.4 18.5H14.6L12 24.2Z" fill="#c9b8df"/>
+  <path d="M9.4 9.5H14.6L16 14L14.6 18.5H9.4L8 14Z" fill="url(#thumb-amethyst)"/>
+  <path d="M12 3.8L5.8 7L4.3 14M5.8 7L9.4 9.5H14.6M9.4 9.5L8 14" stroke="#f5f5ed" stroke-width=".7" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>
+  <path d="M3.2 13.6L5 5.8L12 2.4L18.6 5.6M19.6 21.6L12 25.5" stroke="#f5f5ed" stroke-width=".8" stroke-linecap="round"/>
+</svg>

@@ -17,6 +17,8 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 
 Open the **Demo Garden** drawer to switch demos and adjust their tools. It starts collapsed on phones. **Hide**, **H**, or **Escape** hides the interface; the small **Controls** tab or **H** brings it back. Opening, closing and hiding controls leave the full-size canvas and simulation state intact. **Restart** restores the active demo's defaults. **Full screen** is available when the browser supports it.
 
+The drawer has a silver leafy-vine frame, engraved dividers and faceted gemstone controls. Its vector ornaments scale cleanly, while sliders and menus retain native keyboard and touch behavior.
+
 You can also set the URL hash directly:
 
 ```

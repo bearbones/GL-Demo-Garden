@@ -1,12 +1,15 @@
 :root {
   color-scheme: dark;
   font-family: "Trebuchet MS", "Avenir Next", Verdana, sans-serif;
-  color: #eee8ff;
-  --ink: #292439;
-  --panel: #342e46;
-  --line: #665a79;
-  --muted: #bfb3cd;
-  --accent: #f5b8a2;
+  color: #f1edf7;
+  --velvet: #241e35;
+  --silver: #cbd5dc;
+  --silver-light: #f5f5ed;
+  --moonstone: #d2dfe7;
+  --amethyst: #9277c0;
+  --aquamarine: #80c7c5;
+  --muted: #c0bacd;
+  --display-font: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
 }
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #171520; }
@@ -14,46 +17,150 @@ button, select, input { font: inherit; }
 button, select { color: inherit; }
 button { cursor: pointer; }
 [hidden] { display: none !important; }
-button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--silver-light);
+  outline-offset: 4px;
+}
 #stage { position: fixed; inset: 0; }
-#garden-ui { position: fixed; top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); width: 316px; z-index: 20; }
-.garden-bar { display: flex; align-items: stretch; background: var(--ink); border: 1px solid #918099; border-radius: 15px 15px 3px 3px; padding: 5px; box-shadow: 3px 4px 0 #17152066; }
-.garden-bar button { border: 0; background: transparent; min-height: 38px; padding: 0 9px; border-radius: 9px; }
-.garden-bar button:hover { background: #51455d; }
-#drawer-toggle { display: flex; flex: 1; align-items: center; gap: 9px; font-size: 15px; font-weight: bold; }
-.garden-mark { width: 25px; height: 28px; fill: #a7b9d4; stroke: #eee8ff; stroke-width: 1.3; }
-.toggle-glyph { color: var(--accent); font-size: 20px; margin-left: auto; font-weight: normal; }
-#hide-ui { font-size: 11px; color: var(--muted); }
-kbd { font: inherit; opacity: .7; border: 1px solid currentColor; padding: 1px 4px; border-radius: 3px; margin-left: 3px; }
-#garden-drawer { max-height: calc(100dvh - 90px - env(safe-area-inset-top)); overflow-y: auto; scrollbar-width: thin; scrollbar-color: #918099 var(--ink); background: var(--panel); border: 1px solid #918099; border-top: 0; border-radius: 0 0 18px 3px; box-shadow: 3px 4px 0 #17152066; }
-.demo-picker { padding: 18px 18px 12px; }
-.demo-picker > label { display: block; color: var(--accent); font-size: 12px; margin-bottom: 7px; }
-select { width: 100%; min-width: 0; border: 1px solid var(--line); background: var(--ink); border-radius: 5px; padding: 8px; font-size: 13px; cursor: pointer; }
-#demo-select { font-size: 18px; padding: 9px 6px; border-width: 0 0 1px; border-color: #93829f; border-radius: 0; background: transparent; }
-option, optgroup { background: var(--ink); color: #eee8ff; }
-#demo-hint { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
-.param-panel { padding: 0 18px 16px; }
-.param-slider { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; margin: 13px 0; font-size: 12px; }
-.param-slider output { color: #bed2e9; font-variant-numeric: tabular-nums; }
-.param-slider input { grid-column: 1 / -1; width: 100%; height: 22px; margin: 0; accent-color: #a7b9d4; cursor: ew-resize; }
-.param-select { display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; gap: 8px; margin: 11px 0; font-size: 12px; }
-.param-buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
-.param-buttons button, .garden-footer button { flex: 1; min-height: 36px; border: 1px solid var(--line); border-radius: 5px; padding: 7px 9px; background: #40364f; font-size: 12px; }
-.param-buttons button:hover, .garden-footer button:hover { background: #584760; border-color: var(--accent); }
-.param-section { font-size: 13px; font-weight: bold; color: var(--accent); border-top: 1px solid var(--line); padding-top: 15px; margin: 19px 0 11px; }
-.param-note { font-size: 11px; color: var(--muted); line-height: 1.55; margin: 10px 0; }
-.garden-footer { display: flex; gap: 8px; padding: 12px 18px 16px; border-top: 1px solid var(--line); }
-#restore-ui { position: fixed; bottom: max(14px, env(safe-area-inset-bottom)); left: max(16px, env(safe-area-inset-left)); z-index: 20; border: 1px solid #918099; border-radius: 5px 12px 5px 5px; background: var(--ink); padding: 10px 13px; color: #eee8ff; font-size: 12px; opacity: .65; }
-#restore-ui:hover, #restore-ui:focus-visible { opacity: 1; }
+
+/* The metalwork belongs to the fixed frame, so it never scrolls over a tool. */
+#garden-ui {
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top));
+  left: max(16px, env(safe-area-inset-left));
+  width: 360px;
+  z-index: 20;
+  border: 1px solid #a2a8b7;
+  border-radius: 24px 24px 22px 22px;
+  background:
+    radial-gradient(ellipse at 50% 0, #6350733b, transparent 55%),
+    repeating-linear-gradient(115deg, #ffffff02 0 1px, transparent 1px 5px),
+    var(--velvet);
+  box-shadow: inset 0 0 0 3px #10121d, inset 0 0 0 4px #717584,
+    inset 0 0 28px #070b17a6, 0 10px 32px #080a174d, 0 2px 5px #080a1773;
+}
+.garden-frame { position: absolute; inset: 0; z-index: 2; border-radius: inherit; overflow: hidden; pointer-events: none; }
+.vine-corner { position: absolute; width: 64px; height: 100px; background: url('./ui/ornaments/vine-corner.svg') 0 0 / 64px 100px no-repeat; }
+.vine-top-left { top: 0; left: 0; }
+.vine-top-right { top: 0; right: 0; transform: scaleX(-1); }
+.vine-bottom-left { bottom: 0; left: 0; transform: scaleY(-1); }
+.vine-bottom-right { bottom: 0; right: 0; transform: scale(-1); }
+.vine-rail { position: absolute; top: 100px; bottom: 100px; width: 24px; background: url('./ui/ornaments/vine-rail.svg') 0 0 / 24px 160px repeat-y; }
+.vine-rail-left { left: 0; }
+.vine-rail-right { right: 0; transform: scaleX(-1); }
+.drawer-collapsed .vine-rail, .drawer-collapsed .vine-bottom-left, .drawer-collapsed .vine-bottom-right { display: none; }
+.garden-bar { display: flex; align-items: center; gap: 8px; min-height: 84px; padding: 18px 38px 14px; }
+.garden-bar button { border: 0; min-height: 44px; }
+#drawer-toggle { display: flex; flex: 1; align-items: center; gap: 9px; padding: 0; background: transparent; text-align: left; }
+#drawer-toggle > span:not(.toggle-glyph) { font: 20px/1.1 var(--display-font); color: var(--silver-light); text-shadow: 0 2px 2px #0008; }
+.garden-mark { flex: none; width: 33px; height: 40px; filter: drop-shadow(0 2px 2px #070b17); }
+.toggle-glyph { display: grid; place-items: center; flex: none; width: 23px; height: 23px; margin-left: auto; color: var(--moonstone); font-size: 18px; border: 1px solid #9aa4b8; border-radius: 50%; background: radial-gradient(ellipse at 35% 20%, #ad99ca55, #221e35 70%); box-shadow: inset 0 0 0 2px #151726, 0 1px 2px #0009; }
+#drawer-toggle:hover .toggle-glyph { color: #fff; border-color: #f5f5ed; background-color: #6a567f; }
+kbd { font: inherit; font-size: 10px; opacity: .8; border: 1px solid #aeb4c17a; padding: 1px 4px; border-radius: 2px; margin-left: 3px; }
+#garden-drawer { max-height: calc(100dvh - 130px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #969bac #1a1728; margin: 0 24px 12px; }
+.demo-picker { padding: 6px 6px 12px; }
+.demo-picker > label { display: block; color: var(--silver); font-size: 11px; margin-bottom: 8px; }
+select {
+  appearance: none;
+  width: 100%; min-width: 0; min-height: 40px;
+  border: 1px solid #9aa4b3; border-radius: 4px;
+  padding: 9px 30px 9px 11px;
+  background-color: #39334c;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='12' viewBox='0 0 14 12'%3E%3Cpath d='M1 3 7 10 13 3Z' fill='%239d89c0' stroke='%23dce4eb' stroke-width='.8'/%3E%3Cpath d='m1 3 6 2 6-2M7 5v5' fill='none' stroke='%23f5f5ed' stroke-width='.7'/%3E%3C/svg%3E"),
+    linear-gradient(118deg, #b8a6d335, transparent 38%, #16162944 62%, #b5add329);
+  background-repeat: no-repeat;
+  background-position: right 10px center, 0 0;
+  background-size: 14px 12px, 100% 100%;
+  box-shadow: inset 0 0 0 1px #111323, inset 0 3px 0 #ddcfff25, inset 0 -4px 0 #14111e70, 0 2px 3px #080a1745;
+  font-size: 12px; cursor: pointer;
+}
+select:hover { border-color: var(--silver-light); }
+#demo-select { font: 20px/1.2 var(--display-font); min-height: 48px; padding-left: 14px; background-color: #3a3e55; }
+option, optgroup { background: var(--velvet); color: #f1edf7; font-family: "Trebuchet MS", Verdana, sans-serif; font-size: 14px; }
+#demo-hint { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.param-panel { padding: 0 6px 9px; }
+.param-slider { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 12px; margin: 12px 0; font-size: 12px; }
+.param-slider output { color: #e1e1f4; font-size: 11px; font-variant-numeric: tabular-nums; min-width: 42px; text-align: center; padding: 3px 7px; border: 1px solid #8f8caa87; border-radius: 3px; background: linear-gradient(135deg, #71648044, #232033 65%); box-shadow: inset 0 1px 0 #ffffff15; }
+.param-slider input { appearance: none; grid-column: 1 / -1; width: 100%; height: 32px; margin: 0; background: transparent; cursor: ew-resize; border-radius: 3px; }
+/* Keep the full input rectangular: the jewel is only the movable thumb. */
+.param-slider input::-webkit-slider-runnable-track { height: 8px; border: 1px solid #aebac5; border-radius: 8px; background: linear-gradient(180deg, #ffffff66, transparent 45%, #02010b99), linear-gradient(90deg, #aa8dc8 var(--range-fill), #29253d var(--range-fill)); box-shadow: inset 0 1px 2px #080d1a, 0 1px 0 #f4f0ff25; }
+.param-slider input::-webkit-slider-thumb { appearance: none; width: 24px; height: 28px; margin-top: -11px; border: 0; border-radius: 0; background: url('./ui/ornaments/jewel-thumb.svg') center / contain no-repeat; filter: drop-shadow(0 2px 2px #080818b3); }
+.param-slider input::-moz-range-track { height: 6px; border: 1px solid #aebac5; border-radius: 8px; background: linear-gradient(180deg, #ffffff66, transparent 45%, #02010b99), linear-gradient(90deg, #aa8dc8 var(--range-fill), #29253d var(--range-fill)); box-shadow: inset 0 1px 2px #080d1a, 0 1px 0 #f4f0ff25; }
+.param-slider input::-moz-range-thumb { width: 24px; height: 28px; border: 0; border-radius: 0; background: url('./ui/ornaments/jewel-thumb.svg') center / contain no-repeat; filter: drop-shadow(0 2px 2px #080818b3); }
+.param-slider input:hover::-webkit-slider-thumb, .param-slider input:focus-visible::-webkit-slider-thumb { filter: drop-shadow(0 0 4px #d5bdf7a6); }
+.param-slider input:hover::-moz-range-thumb, .param-slider input:focus-visible::-moz-range-thumb { filter: drop-shadow(0 0 4px #d5bdf7a6); }
+.param-select { display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 8px; margin: 11px 0; font-size: 12px; }
+.param-buttons { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
+
+/* Only the decorative layers are cut. Text and focus rings stay unclipped. */
+.param-buttons button, .garden-footer button, #hide-ui, #restore-ui {
+  --gem-face: #524268;
+  position: relative; isolation: isolate;
+  border: 0; border-radius: 3px; background: transparent;
+  color: #f5f1fb; text-shadow: 0 1px 2px #10101dcc;
+  box-shadow: 0 2px 3px #080a1733;
+}
+.param-buttons button::before, .garden-footer button::before, #hide-ui::before, #restore-ui::before,
+.param-buttons button::after, .garden-footer button::after, #hide-ui::after, #restore-ui::after {
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px);
+}
+.param-buttons button::before, .garden-footer button::before, #hide-ui::before, #restore-ui::before {
+  inset: 0; background: linear-gradient(145deg, #f0f2e9, #9cabc0 24%, #4b5268 48%, #d4dce4 75%, #7c8296);
+}
+.param-buttons button::after, .garden-footer button::after, #hide-ui::after, #restore-ui::after {
+  inset: 2px;
+  background:
+    linear-gradient(140deg, #f0deff99 0 39%, #d1b3e933 40% 50%, transparent 51%) left top / 18px 100% no-repeat,
+    linear-gradient(-140deg, #d8d2f859 0 39%, #17132c88 40% 50%, transparent 51%) right top / 18px 100% no-repeat,
+    linear-gradient(180deg, #ddd1fa55, #c3a6e21a) center top / 100% 5px no-repeat,
+    linear-gradient(0deg, #0a102499, #31274944) center bottom / 100% 7px no-repeat,
+    linear-gradient(115deg, #dbbeff1f, #090f2426 45%, transparent 72%), var(--gem-face);
+  box-shadow: inset 0 0 0 1px #d8c6ef66;
+}
+.param-buttons button, .garden-footer button { flex: 1; min-height: 40px; padding: 9px 13px; font-size: 12px; }
+.param-buttons button:hover, .garden-footer button:hover, #hide-ui:hover { --gem-face: #6b537f; }
+.param-buttons button:active, .garden-footer button:active, #hide-ui:active, #restore-ui:active { transform: translateY(1px); }
+#hide-ui { flex: none; min-width: 44px; padding: 8px 9px; font-size: 10px; }
+#hide-ui kbd { display: none; }
+.param-section { font: 17px/1.3 var(--display-font); color: var(--moonstone); padding-top: 24px; margin: 20px 0 11px; background: url('./ui/ornaments/leaf-divider.svg') center top / 180px 18px no-repeat; }
+.param-note { font-size: 11px; color: var(--muted); line-height: 1.6; margin: 10px 0; }
+.garden-footer { display: flex; gap: 10px; padding: 26px 12px 18px; background: url('./ui/ornaments/leaf-divider.svg') center top / 180px 18px no-repeat; }
+.garden-footer button { --gem-face: #3d4a61; }
+#restore-ui { --gem-face: #344d59; position: fixed; bottom: max(14px, env(safe-area-inset-bottom)); left: max(16px, env(safe-area-inset-left)); z-index: 20; min-height: 44px; padding: 11px 17px; font-size: 12px; opacity: .82; }
+#restore-ui:hover, #restore-ui:focus-visible { opacity: 1; --gem-face: #4a6873; }
 body.ui-hidden .demo-overlay { display: none !important; }
-#gl-error { position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 40; background: #512e40; border: 1px solid var(--accent); color: #fff; padding: 16px; font-size: 14px; }
+#gl-error { position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 40; background: #512e40; border: 1px solid var(--silver); color: #fff; padding: 16px; font-size: 14px; }
 @media (max-width: 600px) {
-  #garden-ui { top: max(10px, env(safe-area-inset-top)); left: max(10px, env(safe-area-inset-left)); width: min(316px, calc(100vw - 20px)); }
-  #garden-drawer { max-height: calc(100dvh - 78px - env(safe-area-inset-top)); }
-  .param-slider input { height: 28px; }
-  .garden-bar button, .param-buttons button, .garden-footer button, #restore-ui { min-height: 44px; }
+  #garden-ui { top: max(10px, env(safe-area-inset-top)); left: max(10px, env(safe-area-inset-left)); width: min(360px, calc(100vw - 20px)); }
+  #garden-drawer { max-height: calc(100dvh - 122px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .garden-bar { gap: 6px; padding-inline: 34px; }
+  #drawer-toggle { gap: 7px; }
+  #drawer-toggle > span:not(.toggle-glyph) { font-size: 19px; }
+  .garden-mark { width: 29px; }
+  .param-slider input, select, .param-buttons button, .garden-footer button { min-height: 44px; }
+}
+@media (max-width: 350px) {
+  #drawer-toggle > span:not(.toggle-glyph) { font-size: 17px; }
+  .garden-mark { width: 25px; }
+  .garden-bar { gap: 5px; }
+  .param-select { grid-template-columns: 65px minmax(0, 1fr); gap: 6px; }
 }
 @media (prefers-reduced-motion: no-preference) {
-  #garden-drawer { animation: open-drawer 140ms ease-out; }
-  @keyframes open-drawer { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  #garden-drawer { animation: open-drawer 150ms ease-out; }
+  button { transition: color 120ms, opacity 120ms; }
+  @keyframes open-drawer { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+}
+@media (forced-colors: active) {
+  .garden-frame { display: none; }
+  .param-buttons button, .garden-footer button, #hide-ui, #restore-ui { border: 1px solid ButtonText; }
+  .param-buttons button::before, .garden-footer button::before, #hide-ui::before, #restore-ui::before,
+  .param-buttons button::after, .garden-footer button::after, #hide-ui::after, #restore-ui::after { display: none; }
+  .param-slider input { appearance: auto; }
+  .param-slider input::-webkit-slider-runnable-track { all: revert; }
+  .param-slider input::-webkit-slider-thumb { all: revert; }
+  .param-slider input:is(:hover, :focus-visible)::-webkit-slider-thumb { filter: none; }
+  .param-slider input::-moz-range-track { all: revert; }
+  .param-slider input::-moz-range-thumb { all: revert; }
+  .param-slider input:is(:hover, :focus-visible)::-moz-range-thumb { filter: none; }
 }

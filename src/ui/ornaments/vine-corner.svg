@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="100" viewBox="0 0 64 100" fill="none">
+  <title>Silver vine corner</title>
+  <defs>
+    <linearGradient id="corner-silver" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#f5f5ed"/>
+      <stop offset=".28" stop-color="#cbd5dc"/>
+      <stop offset=".52" stop-color="#88919f"/>
+      <stop offset=".72" stop-color="#e5ebee"/>
+      <stop offset="1" stop-color="#677180"/>
+    </linearGradient>
+    <linearGradient id="corner-wire" x1="6" y1="0" x2="18" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#88919f"/>
+      <stop offset=".42" stop-color="#f5f5ed"/>
+      <stop offset=".68" stop-color="#cbd5dc"/>
+      <stop offset="1" stop-color="#88919f"/>
+    </linearGradient>
+    <radialGradient id="corner-bead" cx=".3" cy=".22" r=".8">
+      <stop stop-color="#f5f5ed"/>
+      <stop offset=".38" stop-color="#cbd5dc"/>
+      <stop offset=".75" stop-color="#88919f"/>
+      <stop offset="1" stop-color="#4b495d"/>
+    </radialGradient>
+  </defs>
+  <!-- The broad wire remains legible beneath a narrow edge glint. -->
+  <path d="M12 100C12 87 10 76 12 63C14 49 12 36 23 25C34 14 47 12 64 12" stroke="#302e40" stroke-width="5.6"/>
+  <path d="M12 100C12 87 10 76 12 63C14 49 12 36 23 25C34 14 47 12 64 12" stroke="url(#corner-wire)" stroke-width="3.4"/>
+  <path d="M10.9 100C10.9 87 8.9 76 10.9 63C12.9 49 11.4 35.8 22.3 24.2C33.5 12.7 47 10.8 64 10.8" stroke="#f5f5ed" stroke-width=".7" opacity=".8"/>
+  <g fill="url(#corner-silver)" stroke="#4b495d" stroke-width="1.1" stroke-linejoin="round">
+    <path d="M11.6 82C4.7 79 1.4 70.2 3.4 61.5C11.8 65.9 16 73.7 11.6 82Z"/>
+    <path d="M13.2 66.3C13.7 54.9 21 46.1 29.7 43.5C29.5 54.6 23.4 63.8 13.2 66.3Z"/>
+    <path d="M16.2 44.4C6.4 41.5 2.2 31.5 4.7 22.7C14.8 26.3 20 34 16.2 44.4Z"/>
+    <path d="M23.6 26.2C22 16.2 27.4 7 35 3.2C37.2 13.4 33 22.2 23.6 26.2Z"/>
+    <path d="M37.2 16C40.5 24.1 49.5 27.7 57.7 24.9C53.6 16.9 46.1 12.3 37.2 16Z"/>
+    <path d="M47.5 12.8C50.5 6.1 56.4 3.3 63.5 4.8C61.1 11.5 55.7 14.7 47.5 12.8Z"/>
+  </g>
+  <g stroke="#f5f5ed" stroke-width=".85" stroke-linecap="round" opacity=".9">
+    <path d="M11.5 79.3C8.8 74.1 6.5 69 4.7 64.1"/>
+    <path d="M15.4 63.3C18.5 57.2 22.7 51.5 27.4 46.6"/>
+    <path d="M15.2 41.4C10.7 36.5 7.8 31.4 6.1 25.7"/>
+    <path d="M24.7 23C28.4 17.7 31.3 11.7 33.6 6.2"/>
+    <path d="M40.3 17.1C45 18.5 50.3 21 54.7 23.7"/>
+    <path d="M50.1 11.7L60.5 6.1"/>
+  </g>
+  <g stroke="#68717f" stroke-width=".65" stroke-linecap="round" opacity=".8">
+    <path d="M10.2 76.8L12.9 71.4M7.9 71.2L5.1 72.2M19.1 57.1L24.4 55.3M22.5 52.7L21.5 49.2M11.3 35.9L14.9 33.9M28.7 15.7L33.8 14.5M45.3 19.3L46.7 23.5"/>
+  </g>
+  <!-- A small curled tendril and two polished silver beads. -->
+  <path d="M12.8 90.5C19.4 88.1 24.6 81.9 22.8 76.6C21.6 73.2 17.5 74.6 18.4 77.5" stroke="#4b495d" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M12.8 90.5C19.4 88.1 24.6 81.9 22.8 76.6C21.6 73.2 17.5 74.6 18.4 77.5" stroke="#cbd5dc" stroke-width="1.1" stroke-linecap="round"/>
+  <circle cx="13.1" cy="49.3" r="2.4" fill="url(#corner-bead)" stroke="#4b495d" stroke-width=".8"/>
+  <circle cx="32.4" cy="18.5" r="2.6" fill="url(#corner-bead)" stroke="#4b495d" stroke-width=".8"/>
+</svg>

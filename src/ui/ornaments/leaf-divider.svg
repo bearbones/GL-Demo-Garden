@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="18" viewBox="0 0 180 18" fill="none">
+  <title>Silver leaf divider with a small violet jewel</title>
+  <defs>
+    <linearGradient id="divider-silver" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f5f5ed"/>
+      <stop offset=".4" stop-color="#cbd5dc"/>
+      <stop offset="1" stop-color="#88919f"/>
+    </linearGradient>
+    <g id="divider-branch">
+      <path d="M86 9C67 6 51 11 30 9C20 8 14 7.5 5 9" stroke="#4b495d" stroke-width="2.3" stroke-linecap="round"/>
+      <path d="M86 8.7C67 5.7 51 10.7 30 8.7C20 7.7 14 7.2 5 8.7" stroke="url(#divider-silver)" stroke-width="1" stroke-linecap="round"/>
+      <g fill="url(#divider-silver)" stroke="#4b495d" stroke-width=".7" stroke-linejoin="round">
+        <path d="M69 8.4C65 3.3 59 1.3 53.6 3.2C57 8.2 63.2 10.8 69 8.4Z"/>
+        <path d="M51.6 9.5C45.7 9.2 40.3 12 37.8 16C44.2 16.1 49.5 13.8 51.6 9.5Z"/>
+        <path d="M31.3 9C27.4 5.5 22.5 4.1 17.3 5.4C20.3 9.3 26 11 31.3 9Z"/>
+      </g>
+      <g stroke="#f5f5ed" stroke-width=".6" stroke-linecap="round" opacity=".85">
+        <path d="M66.5 7.8L57.4 4.4M48.9 10.5L41.4 14.3M28.6 8.2L21.1 6.4"/>
+      </g>
+      <circle cx="77.8" cy="8.1" r="1.3" fill="#cbd5dc" stroke="#4b495d" stroke-width=".6"/>
+    </g>
+  </defs>
+  <use href="#divider-branch"/>
+  <use href="#divider-branch" transform="translate(180 0) scale(-1 1)"/>
+  <path d="M90 4.3L94.6 9L90 13.7L85.4 9Z" fill="url(#divider-silver)" stroke="#4b495d" stroke-width=".8" stroke-linejoin="round"/>
+  <path d="M90 6.2L92.8 9L90 11.8L87.2 9Z" fill="#bdaddb"/>
+  <path d="M90 6.2L92.8 9L90 9.1L87.2 9Z" fill="#eee9f7"/>
+  <path d="M90 9.1L92.8 9L90 11.8Z" fill="#88919f"/>
+</svg>

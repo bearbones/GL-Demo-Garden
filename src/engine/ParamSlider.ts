@@ -42,6 +42,8 @@ export class ParamSlider {
     const update = (notify: boolean) => {
       const value = Number(input.value);
       valueLabel.value = value.toFixed(decimals);
+      const fraction = config.max > config.min ? (value - config.min) / (config.max - config.min) : 0;
+      input.style.setProperty('--range-fill', `${fraction * 100}%`);
       if (notify) config.onChange(value);
     };
     update(false);

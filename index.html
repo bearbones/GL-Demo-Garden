@@ -3,15 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#292439" />
+  <meta name="theme-color" content="#241e35" />
   <title>GL Demo Garden</title>
 </head>
 <body>
   <main id="stage" aria-label="Interactive demo"></main>
   <div id="garden-ui">
+    <div class="garden-frame" aria-hidden="true">
+      <span class="vine-rail vine-rail-left"></span>
+      <span class="vine-rail vine-rail-right"></span>
+      <span class="vine-corner vine-top-left"></span>
+      <span class="vine-corner vine-top-right"></span>
+      <span class="vine-corner vine-bottom-left"></span>
+      <span class="vine-corner vine-bottom-right"></span>
+    </div>
     <header class="garden-bar">
       <button id="drawer-toggle" aria-controls="garden-drawer" aria-expanded="true" title="Open or close tools">
-        <svg class="garden-mark" viewBox="0 0 28 28" aria-hidden="true"><path d="M14 24V12M14 17C4 18 3 10 4 6c8-1 12 3 10 11ZM14 12c-1-7 4-10 10-9 1 6-2 11-10 9Z"/></svg>
+        <img class="garden-mark" src="/src/ui/ornaments/garden-crest.svg" alt="" aria-hidden="true" />
         <span>Demo Garden</span><span class="toggle-glyph" aria-hidden="true">−</span>
       </button>
       <button id="hide-ui" title="Hide interface (H)" aria-label="Hide interface">Hide <kbd>H</kbd></button>
