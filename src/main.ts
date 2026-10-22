@@ -9,6 +9,7 @@ import { SeaMeltPlugin } from './plugins/sea-melt';
 import { GlassWaterPlugin } from './plugins/glass-water';
 import { StoneBreakPlugin } from './plugins/stone-break';
 import { LighthouseVigilPlugin } from './plugins/lighthouse-vigil';
+import { PaperMarblingPlugin } from './plugins/paper-marbling';
 
 const PLUGINS: Record<string, () => Plugin> = {
   'wobbly-cells': () => new WobbyCellsPlugin(),
@@ -20,6 +21,7 @@ const PLUGINS: Record<string, () => Plugin> = {
   'glass-water': () => new GlassWaterPlugin(),
   'stone-break': () => new StoneBreakPlugin(),
   'lighthouse-vigil': () => new LighthouseVigilPlugin(),
+  'paper-marbling': () => new PaperMarblingPlugin(),
 };
 
 const DEFAULT_ID = 'wobbly-cells';

@@ -72,7 +72,7 @@ export class ParamSlider {
     options: { value: string; label: string }[];
     value: string;
     onChange: (value: string) => void;
-  }) {
+  }): HTMLSelectElement {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
 
@@ -94,6 +94,23 @@ export class ParamSlider {
 
     row.appendChild(label);
     row.appendChild(select);
+    this.panel.appendChild(row);
+    return select;
+  }
+
+  /** A row of push buttons, for one-shot actions (e.g. reset). */
+  addButtons(buttons: { label: string; onClick: () => void }[]) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
+    for (const config of buttons) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = config.label;
+      button.style.cssText =
+        'flex:1;background:#232329;color:#eee;border:1px solid #3a3a42;border-radius:6px;padding:4px 8px;font:inherit;cursor:pointer;';
+      button.addEventListener('click', config.onClick);
+      row.appendChild(button);
+    }
     this.panel.appendChild(row);
   }
 
