@@ -391,7 +391,9 @@ export class PaperMarblingPlugin implements Plugin {
   }
 
   private strokeTo(s: ActiveStroke, pos: Vec2, tolPx = CHORD_TOL_PX) {
-    if (Math.hypot(pos[0] - s.last[0], pos[1] - s.last[1]) < 1e-7) return;
+    // Ignore sub-pixel creep (the smoothed tool settling), which would
+    // otherwise repaint every frame while the stylus is held still
+    if (Math.hypot(pos[0] - s.last[0], pos[1] - s.last[1]) < 0.05 / this.pxPerBU) return;
     // Something else was appended since this op opened (e.g. a tapped drop):
     // continue as a new op after it, so the rest of the motion reaches it
     if (s.op >= 0 && s.op !== this.opCount - 1) {
