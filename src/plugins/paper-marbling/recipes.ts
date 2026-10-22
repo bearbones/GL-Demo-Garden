@@ -12,6 +12,8 @@ export interface Palette {
   colors: RGB[];
   /** Suminagashi: taps alternate ink with clear surfactant drops */
   alternateClear?: boolean;
+  /** Coverage of each drop; sumi ink is a slightly translucent film */
+  inkAlpha?: number;
 }
 
 function hex(h: string): RGB {
@@ -19,6 +21,7 @@ function hex(h: string): RGB {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+// The last colour of each multi-colour palette is the light ground
 export const PALETTES: Record<string, Palette> = {
   ottoman: {
     label: 'Ottoman',
@@ -40,24 +43,38 @@ export const PALETTES: Record<string, Palette> = {
     label: 'Suminagashi',
     colors: [hex('#1b1b1f'), hex('#2a3a5e')],
     alternateClear: true,
+    inkAlpha: 0.85,
   },
 };
 
 /** One tool: a stylus is a comb with one tine */
 export interface StrokeTool {
   tines: number;
-  spacing: number; // between tines, bath units
-  size: number;    // rod size, bath units
-  kappa: number;   // fraction of rod speed the paint at the rod moves
-  axis: Vec2;      // unit vector the tines are spread along
+  spacing: number;  // between tines, bath units
+  size: number;     // rod size, bath units
+  kappa: number;    // fraction of rod speed the paint at the rod moves
+  axis: Vec2;       // unit vector the tines are spread along
+  falloff: number;  // cross-path wake width, bath units; 0 = derive from size
 }
 
 export interface DropSpec {
-  at: number;    // seconds into the recipe
+  at: number;      // seconds into the recipe
   x: number;
   y: number;
   r: number;
-  color: number; // palette index; −1 = clear drop (bare size)
+  color: number;   // palette index; −1 = clear drop (bare size), −2 = random
+  spread?: number; // seconds to reach full size (default scales with r)
+  spot?: number;   // drops sharing a spot land on its current centre
+}
+
+/** A breath on the water: the paint turns about a centre, less with distance */
+export interface SwirlSpec {
+  at: number;
+  x: number;
+  y: number;
+  radius: number; // falloff radius, bath units
+  angle: number;  // turn at the centre, radians (sign = direction)
+  dur: number;    // seconds to turn fully
 }
 
 export interface StrokeSpec {
@@ -70,6 +87,7 @@ export interface StrokeSpec {
 export interface Recipe {
   drops: DropSpec[];
   strokes: StrokeSpec[];
+  swirls: SwirlSpec[];
   end: number;
 }
 
@@ -113,8 +131,43 @@ function sprinkle(
   return t0 + rounds.length * roundDur;
 }
 
-function comb(spacing: number, axis: Vec2, span: number): StrokeTool {
-  return { tines: Math.ceil(span / spacing) + 1, spacing, size: ROD, kappa: 0.9, axis };
+/** One huge drop of the ground colour, so no bare size survives the sprinkle */
+function ground(out: DropSpec[], aspect: number, color: number) {
+  out.push({ at: 0, x: 0, y: 0, r: Math.hypot(aspect / 2, 0.5) + 0.2, color, spread: 0.7 });
+}
+
+/**
+ * Drops sharing a spot should stay concentric, but drops landing elsewhere
+ * push each spot's rings sideways. Follow every spot's centre through each
+ * drop's forward map p' = c + (p−c)·√(1 + R²/|p−c|²) and land each drop on
+ * its spot's current centre.
+ */
+function trackSpots(drops: DropSpec[]) {
+  const centres = new Map<number, Vec2>();
+  for (const d of drops) {
+    if (d.spot === undefined) continue;
+    const c = centres.get(d.spot);
+    if (c) {
+      d.x = c[0];
+      d.y = c[1];
+    } else {
+      centres.set(d.spot, [d.x, d.y]);
+    }
+    for (const p of centres.values()) {
+      const dx = p[0] - d.x;
+      const dy = p[1] - d.y;
+      const r2 = dx * dx + dy * dy;
+      if (r2 < 1e-12) continue;
+      const f = Math.sqrt(1 + (d.r * d.r) / r2);
+      p[0] = d.x + dx * f;
+      p[1] = d.y + dy * f;
+    }
+  }
+}
+
+/** A rake; its wake widens with the tine spacing so wide combs draw flames */
+function comb(spacing: number, axis: Vec2, span: number, kappa = 0.9): StrokeTool {
+  return { tines: Math.ceil(span / spacing) + 1, spacing, size: ROD, kappa, axis, falloff: 0.25 * spacing };
 }
 
 /** Straight full-bath pass of a comb, entering and leaving off-screen */
@@ -128,16 +181,19 @@ function pass(start: number, from: Vec2, to: Vec2, tool: StrokeTool): StrokeSpec
 export function buildRecipe(id: string, aspect: number, nColors: number, rnd: () => number): Recipe {
   const drops: DropSpec[] = [];
   const strokes: StrokeSpec[] = [];
+  const swirls: SwirlSpec[] = [];
   const c = (i: number) => i % nColors;
+  const light = nColors - 1;
   const halfW = aspect / 2 + 0.15;
-  const vComb = (s: number) => comb(s, [1, 0], aspect + 0.6); // tines across, moves vertically
-  const hComb = (s: number) => comb(s, [0, 1], 1.6);          // tines down, moves horizontally
+  const vComb = (s: number, kappa?: number) => comb(s, [1, 0], aspect + 0.6, kappa); // moves vertically
+  const hComb = (s: number, kappa?: number) => comb(s, [0, 1], 1.6, kappa);          // moves horizontally
   let t = 0;
 
-  // Gel-gel ground: three colours sprinkled to full cover, then a wide
+  // Gel-gel: a light ground, three colours sprinkled over it, then a wide
   // rake down the bath and back up between the first strokes
   const gelgel = () => {
-    t = sprinkle(drops, rnd, aspect, 0, [
+    ground(drops, aspect, light);
+    t = sprinkle(drops, rnd, aspect, 0.5, [
       { color: c(0), cell: 0.23 }, { color: c(1), cell: 0.2 }, { color: c(2), cell: 0.17 },
     ], 0.75) + 0.6;
     strokes.push(pass(t, [0, 0.66], [0, -0.66], vComb(0.14)));
@@ -151,12 +207,16 @@ export function buildRecipe(id: string, aspect: number, nColors: number, rnd: ()
       // Target rings: drops of alternating colour landing on the same spots
       const cols = Math.max(3, Math.round(aspect * 2.4));
       const rows = 3;
+      const ringColours = Math.max(1, nColors > 3 ? nColors - 1 : nColors); // keep the light ground out
       for (let i = 0; i < cols; i++) {
         for (let j = 0; j < rows; j++) {
           const x = ((i + 0.5 + (j % 2) * 0.5) / cols - 0.5) * aspect;
           const y = (j + 0.5) / rows - 0.5;
           for (let k = 0; k < 5; k++) {
-            drops.push({ at: k * 0.32 + rnd() * 0.12, x, y, r: 0.05 - k * 0.004, color: c(k + i + j) });
+            drops.push({
+              at: k * 0.32 + rnd() * 0.12, x, y, r: 0.05 - k * 0.004,
+              color: (k + i + j) % ringColours, spot: i * rows + j,
+            });
           }
         }
       }
@@ -164,7 +224,8 @@ export function buildRecipe(id: string, aspect: number, nColors: number, rnd: ()
       break;
     }
     case 'stone': {
-      t = sprinkle(drops, rnd, aspect, 0, [
+      ground(drops, aspect, light);
+      t = sprinkle(drops, rnd, aspect, 0.5, [
         { color: c(0), cell: 0.24 }, { color: c(1), cell: 0.2 },
         { color: c(2), cell: 0.17 }, { color: c(3), cell: 0.15, prob: 0.85 },
       ], 0.9);
@@ -182,12 +243,12 @@ export function buildRecipe(id: string, aspect: number, nColors: number, rnd: ()
       break;
     case 'nonpareil':
       gelgel();
-      strokes.push(pass(t, [-halfW, 0], [halfW, 0], hComb(0.026)));
+      strokes.push(pass(t, [-halfW, 0], [halfW, 0], hComb(0.026, 0.7)));
       t += PASS;
       break;
     case 'bouquet': {
       gelgel();
-      strokes.push(pass(t, [-halfW, 0], [halfW, 0], hComb(0.026)));
+      strokes.push(pass(t, [-halfW, 0], [halfW, 0], hComb(0.026, 0.7)));
       t += PASS + 0.3;
       // A wide comb drawn down the bath in a sinuous line
       const tool = vComb(0.12);
@@ -199,33 +260,45 @@ export function buildRecipe(id: string, aspect: number, nColors: number, rnd: ()
       break;
     }
     case 'suminagashi': {
-      // Ink and clear drops alternate on a few spots: concentric rings
-      const spots: Vec2[] = [];
-      for (let i = 0; i < 4; i++) {
-        spots.push([(i - 1.5) / 4 * aspect * 0.9 + (rnd() - 0.5) * 0.08, (rnd() - 0.5) * 0.45]);
+      // Ink and clear drops alternate on a few spots; each new drop pushes
+      // the older rings out, so they thin toward the outside and the rings
+      // of neighbouring spots press into one another
+      const cols = Math.max(2, Math.round(aspect * 1.8));
+      const rows = 2;
+      const n = 70;
+      let spot = 0;
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+          const x = ((i + 0.5 + (j % 2 ? 0.35 : -0.15)) / cols - 0.5) * aspect + (rnd() - 0.5) * 0.08;
+          const y = ((j + 0.5) / rows - 0.5) * 0.9 + (rnd() - 0.5) * 0.08;
+          const ink = c(spot);
+          const offset = rnd() * 0.05;
+          for (let k = 0; k < n; k++) {
+            drops.push({ at: offset + k * 0.05, x, y, r: 0.042, color: k % 2 ? -1 : ink, spot });
+          }
+          spot++;
+        }
       }
-      for (let k = 0; k < 14; k++) {
-        spots.forEach(([x, y], s) => {
-          drops.push({ at: k * 0.16 + s * 0.04, x, y, r: 0.034, color: k % 2 ? -1 : c(s % 2) });
+      t = n * 0.05 + 0.5;
+      // Then breathe on the water: overlapping slow turns, alternating in
+      // direction, bend the rings into soft contours like wood grain
+      const breaths = 7;
+      for (let k = 0; k < breaths; k++) {
+        swirls.push({
+          at: t + k * 0.55,
+          x: (rnd() - 0.5) * aspect * 0.9,
+          y: (rnd() - 0.5) * 0.8,
+          radius: 0.16 + 0.14 * rnd(),
+          angle: (k % 2 ? -1 : 1) * (0.6 + 0.6 * rnd()),
+          dur: 1.6,
         });
       }
-      t = 14 * 0.16 + 0.8;
-      // Then a gentle breath across the water: broad, soft stylus curves
-      const soft: StrokeTool = { tines: 1, spacing: 0, size: 0.011, kappa: 0.72, axis: [0, 1] };
-      strokes.push({
-        start: t, dur: 2.4, tool: soft,
-        path: (u) => [-halfW + 2 * halfW * u, 0.12 * Math.sin(u * Math.PI * 2.2) - 0.05],
-      });
-      t += 2.6;
-      strokes.push({
-        start: t, dur: 2.0, tool: soft,
-        path: (u) => [0.2 * Math.sin(u * Math.PI * 1.6) + 0.1, 0.62 - 1.24 * u],
-      });
-      t += 2.0;
+      t += breaths * 0.55 + 1.6;
       break;
     }
   }
 
   drops.sort((a, b) => a.at - b.at);
-  return { drops, strokes, end: t };
+  trackSpots(drops);
+  return { drops, strokes, swirls, end: t };
 }

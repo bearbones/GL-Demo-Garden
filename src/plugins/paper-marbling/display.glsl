@@ -24,17 +24,19 @@ uniform float u_printT;
 const vec3 BATH = vec3(0.885, 0.872, 0.832);
 const vec3 PAPER = vec3(0.958, 0.944, 0.905);
 const vec3 TABLE = vec3(0.105, 0.092, 0.084);
-const float SHEET_INSET = 0.07; // print view: sheet margin, fraction of height
+const float SHEET_INSET = 0.07; // print view: sheet margin, fraction of each side
 
 float aspect() { return u_resolution.x / u_resolution.y; }
 
-// Size (carrageenan) in a pale tray: faint tonal drift, inner wall shadow
-vec3 bathColor(vec2 uv, vec2 q) {
-  vec3 c = BATH * (0.985 + 0.03 * fbm3(q * 2.1 + 3.7));
+// Size (carrageenan) in a pale tray: faint tonal drift
+vec3 bathColor(vec2 q) {
+  return BATH * (0.985 + 0.03 * fbm3(q * 2.1 + 3.7));
+}
+
+// The tray's inner wall shades whatever floats near it, paint included
+float wallShade(vec2 uv) {
   vec2 e = min(uv, 1.0 - uv) * vec2(aspect(), 1.0);
-  float edge = min(e.x, e.y);
-  c *= mix(0.80, 1.0, smoothstep(0.0, 0.05, edge));
-  return c;
+  return mix(0.80, 1.0, smoothstep(0.0, 0.05, min(e.x, e.y)));
 }
 
 // Broad window reflection on the liquid, rippling very slightly
@@ -48,7 +50,8 @@ float sheen(vec2 q) {
 vec3 bathView(vec2 uv) {
   vec2 q = (uv - 0.5) * vec2(aspect(), 1.0);
   vec4 paint = texture(u_paint, uv);
-  vec3 col = bathColor(uv, q) * (1.0 - paint.a) + paint.rgb;
+  vec3 col = bathColor(q) * (1.0 - paint.a) + paint.rgb;
+  col *= mix(wallShade(uv), 1.0, 0.3 * paint.a);
   // Paint films are matte; bare size reflects more
   col += vec3(0.05, 0.055, 0.06) * sheen(q) * (1.0 - 0.55 * paint.a);
   return col;
@@ -158,9 +161,9 @@ void main() {
     return;
   }
 
-  // Phases 2 and 3: the sheet lifted onto the table and turned over
-  float inset = SHEET_INSET;
-  vec2 size = vec2(1.0 - 2.0 * inset / aspect(), 1.0 - 2.0 * inset);
+  // Phases 2 and 3: the sheet lifted onto the table and turned over. The
+  // sheet keeps the bath's aspect so the print is a true mirror image.
+  vec2 size = vec2(1.0 - 2.0 * SHEET_INSET);
   if (u_printPhase == 2) {
     float t = u_printT;
     float shrink = smoothstep(0.0, 0.35, t);

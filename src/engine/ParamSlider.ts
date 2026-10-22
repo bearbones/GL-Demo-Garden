@@ -47,13 +47,15 @@ export class ParamSlider {
     input.value = String(config.value);
     input.style.cssText = 'flex:1;accent-color:#8af;height:4px;cursor:pointer;';
 
+    // Enough decimals to show every step (0.005 → 3), never fewer than 2
+    const decimals = config.step ? Math.max(2, Math.min(4, Math.ceil(-Math.log10(config.step) - 1e-9))) : 2;
     const valueLabel = document.createElement('span');
-    valueLabel.textContent = config.value.toFixed(2);
+    valueLabel.textContent = config.value.toFixed(decimals);
     valueLabel.style.cssText = 'flex:0 0 42px;text-align:left;font-variant-numeric:tabular-nums;opacity:0.6;';
 
     input.addEventListener('input', () => {
       const v = parseFloat(input.value);
-      valueLabel.textContent = v.toFixed(2);
+      valueLabel.textContent = v.toFixed(decimals);
       config.onChange(v);
     });
 
@@ -112,6 +114,10 @@ export class ParamSlider {
       row.appendChild(button);
     }
     this.panel.appendChild(row);
+  }
+
+  setVisible(visible: boolean) {
+    this.panel.style.display = visible ? '' : 'none';
   }
 
   getValue(label: string): number {
