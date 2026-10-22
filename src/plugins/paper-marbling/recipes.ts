@@ -184,9 +184,11 @@ export function buildRecipe(id: string, aspect: number, nColors: number, rnd: ()
   const swirls: SwirlSpec[] = [];
   const c = (i: number) => i % nColors;
   const light = nColors - 1;
-  const halfW = aspect / 2 + 0.15;
-  const vComb = (s: number, kappa?: number) => comb(s, [1, 0], aspect + 0.6, kappa); // moves vertically
-  const hComb = (s: number, kappa?: number) => comb(s, [0, 1], 1.6, kappa);          // moves horizontally
+  // Passes reach past the edges of the bath in either orientation, so a
+  // phone rotated mid-pattern still sees whole passes
+  const halfW = Math.max(aspect, 1 / aspect) / 2 + 0.15;
+  const vComb = (s: number, kappa?: number) => comb(s, [1, 0], 2 * halfW + 0.3, kappa); // moves vertically
+  const hComb = (s: number, kappa?: number) => comb(s, [0, 1], 1.6, kappa);             // moves horizontally
   let t = 0;
 
   // Gel-gel: a light ground, three colours sprinkled over it, then a wide
@@ -205,8 +207,9 @@ export function buildRecipe(id: string, aspect: number, nColors: number, rnd: ()
   switch (id) {
     case 'bullseye': {
       // Target rings: drops of alternating colour landing on the same spots
-      const cols = Math.max(3, Math.round(aspect * 2.4));
-      const rows = 3;
+      // Keep targets about a quarter bath apart so they don't press flat
+      const cols = Math.max(2, Math.round(aspect * 2.4));
+      const rows = aspect < 0.6 ? 4 : 3;
       const ringColours = Math.max(1, nColors > 3 ? nColors - 1 : nColors); // keep the light ground out
       for (let i = 0; i < cols; i++) {
         for (let j = 0; j < rows; j++) {
@@ -260,11 +263,12 @@ export function buildRecipe(id: string, aspect: number, nColors: number, rnd: ()
       break;
     }
     case 'suminagashi': {
-      // Ink and clear drops alternate on a few spots; each new drop pushes
-      // the older rings out, so they thin toward the outside and the rings
-      // of neighbouring spots press into one another
+      // Ink and clear drops alternate from brushes held at fixed points; each
+      // new drop pushes the older rings out, so they thin toward the outside
+      // and neighbouring families press one another off-centre. Drop sizes
+      // vary, as they do from a brush, so the rings vary in width.
       const cols = Math.max(2, Math.round(aspect * 1.8));
-      const rows = 2;
+      const rows = aspect < 0.8 ? 3 : 2;
       const n = 70;
       let spot = 0;
       for (let i = 0; i < cols; i++) {
@@ -274,7 +278,9 @@ export function buildRecipe(id: string, aspect: number, nColors: number, rnd: ()
           const ink = c(spot);
           const offset = rnd() * 0.05;
           for (let k = 0; k < n; k++) {
-            drops.push({ at: offset + k * 0.05, x, y, r: 0.042, color: k % 2 ? -1 : ink, spot });
+            const clear = k % 2 === 1;
+            const r = 0.042 * (clear ? 0.8 + 0.8 * rnd() : 0.5 + 0.5 * rnd());
+            drops.push({ at: offset + k * 0.05, x, y, r, color: clear ? -1 : ink });
           }
           spot++;
         }

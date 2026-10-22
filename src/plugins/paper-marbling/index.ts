@@ -33,6 +33,8 @@ const COMB_LOCK_CSS = 28; // comb heading locks after this much travel (CSS px).
 const COMB_SNAP = 8 * Math.PI / 180; // ...snapping to the tray axes when this close
 const TOOL_SMOOTH = 0.025; // pointer smoothing time constant (s)
 const RECIPE_STEP = 1 / 120; // recipe tool paths are sampled at least this finely (s)
+const WIDE_MIN = 1.8;      // a bake about to become the flattened layer covers at
+                          // least this bath width, and both orientations
 const LAY_TIME = 1.1;
 const FLIP_TIME = 1.0;
 const ROD_DEFAULT = 0.0045;
@@ -65,7 +67,8 @@ interface Target {
   fbo: WebGLFramebuffer;
   w: number;
   h: number;
-  rect: Rect; // bath area the texture covers
+  rect: Rect;     // bath area the texture covers
+  wide?: boolean; // built extra wide to become the flattened layer
 }
 
 /** A stroke being drawn: the open op keeps growing while the path is straight */
@@ -133,9 +136,12 @@ export class PaperMarblingPlugin implements Plugin {
   // refresh interval rather than fixed thresholds. Frame times are measured
   // here because the engine caps dt.
   private bakeBudget = 6e7;
+  private missCap = 4e8;    // budget ceiling learned from strips that missed vsync
   private lastNow = 0;
-  private frameTime = 0;
-  private refresh = Infinity;
+  private frameTime = 0;    // real interval (performance.now); dt is capped
+  private dtHist = new Float32Array(90); // rAF deltas, vsync-aligned
+  private dtIdx = 0;
+  private refresh = 1 / 60;
   private lastStripLimited = false;
   private bakeableLive = 0; // live-pass work the next bake would remove
 
@@ -154,6 +160,7 @@ export class PaperMarblingPlugin implements Plugin {
   private time = 0;
 
   private dragging = false;
+  private rebaseDrag = false; // a resize moved the bath under a held tool
   private pointer: Vec2 = [0, 0];
   private toolPos: Vec2 = [0, 0];
   private userStroke: ActiveStroke | null = null;
@@ -166,7 +173,7 @@ export class PaperMarblingPlugin implements Plugin {
 
   private printPhase = 0; // 0 bath, 1 laying, 2 flipping, 3 viewing
   private printT = 0;
-  private hint: HTMLDivElement | null = null;
+  private hint: HTMLButtonElement | null = null;
 
   init(ctx: EngineContext) {
     const { gl } = ctx;
@@ -258,6 +265,12 @@ export class PaperMarblingPlugin implements Plugin {
 
   resize(ctx: EngineContext) {
     this.allocTargets(ctx);
+    // Bath units follow the canvas, so the point under a held finger moved:
+    // lift the tool and set it down again on the next move
+    if (this.dragging) {
+      this.closeOpenStrokes();
+      this.rebaseDrag = true;
+    }
   }
 
   /** The bake slot to build into, sized for the current screen (null while a resize settles) */
@@ -266,11 +279,40 @@ export class PaperMarblingPlugin implements Plugin {
     const t = this.bakes[slot];
     if (t && t.w === this.bakeW && t.h === this.bakeH) {
       t.rect = [...this.bakeRect];
+      t.wide = false;
       return t;
     }
     if (this.time - this.resizedAt < RESIZE_SETTLE) return null;
     if (t) this.doomed.push(t);
     const fresh = this.createTarget(gl, this.bakeW, this.bakeH, [...this.bakeRect]);
+    this.bakes[slot] = fresh;
+    return fresh;
+  }
+
+  /**
+   * The bake that becomes the flattened layer outlives the ops it absorbs,
+   * so it is built wide enough for either orientation (bath units follow the
+   * canvas height, so rotating a phone widens the visible bath ~4x).
+   */
+  private wideTarget(gl: WebGL2RenderingContext): Target | null {
+    if (this.time - this.resizedAt < RESIZE_SETTLE) return null;
+    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+    const ph = this.pxPerBU;
+    const pw = this.paint.w;
+    const half = Math.max(this.aspect, 1 / this.aspect, WIDE_MIN) / 2 + MARGIN_BU;
+    const mx = Math.max(0, Math.min(Math.round(half * ph - pw / 2), Math.floor((maxTex - 2 - pw) / 2)));
+    const w = pw + 2 * mx;
+    const slot = 1 - this.bakeCur;
+    const rect: Rect = [-this.aspect / 2 - mx / ph, this.bakeRect[1], w / ph, this.bakeRect[3]];
+    const t = this.bakes[slot];
+    if (t && t.w === w && t.h === this.bakeH) {
+      t.rect = rect;
+      t.wide = true;
+      return t;
+    }
+    if (t) this.doomed.push(t);
+    const fresh = this.createTarget(gl, w, this.bakeH, rect);
+    fresh.wide = true;
     this.bakes[slot] = fresh;
     return fresh;
   }
@@ -310,8 +352,35 @@ export class PaperMarblingPlugin implements Plugin {
     const o = i * OP_FLOATS;
     const type = this.ops[o];
     if (type === OP_DROP) return this.time < this.ops[o + 4] + this.ops[o + 7];
-    if (type === OP_SWIRL) return this.time < this.ops[o + 4] + this.ops[o + 5];
+    if (type === OP_SWIRL) return this.time < this.ops[o + 4] + this.ops[o + 5] && this.swirlEase(i) < this.ops[o + 8];
     return false;
+  }
+
+  /** Eased progress of a swirl's turn, as in trace.glsl */
+  private swirlEase(i: number): number {
+    const o = i * OP_FLOATS;
+    const u = Math.min(1, Math.max(0, (this.time - this.ops[o + 4]) / this.ops[o + 5]));
+    return u * u * (3 - 2 * u);
+  }
+
+  /**
+   * A drop landing while a swirl turns must be turned by the rest of it.
+   * Turns about one centre add, so freeze each turning swirl where it is now
+   * and return continuations (the remaining share) to append after the drop.
+   */
+  private splitSwirls(): number[][] {
+    const rest: number[][] = [];
+    for (let i = this.bakeCount; i < this.opCount; i++) {
+      const o = i * OP_FLOATS;
+      if (this.ops[o] !== OP_SWIRL || !this.animating(i)) continue;
+      const e = this.swirlEase(i);
+      const cont = Array.from(this.ops.subarray(o, o + OP_FLOATS));
+      cont[7] = e;
+      rest.push(cont);
+      this.ops[o + 8] = e;
+      this.markDirty(i);
+    }
+    return rest;
   }
 
   /**
@@ -333,6 +402,8 @@ export class PaperMarblingPlugin implements Plugin {
   private addDrop(x: number, y: number, r: number, rgb: [number, number, number],
     alpha: number, spread = 0.35 + 4 * r) {
     this.closeOpenStrokes();
+    if (this.opCount >= MAX_OPS && this.bakeCount > 0) this.flatten();
+    const turning = this.splitSwirls();
     const i = this.reserveOp();
     if (i < 0) return;
     const jitter = 1 + (Math.random() - 0.5) * 0.04;
@@ -340,6 +411,13 @@ export class PaperMarblingPlugin implements Plugin {
       rgb[0] * jitter, rgb[1] * jitter, rgb[2] * jitter, 0], i * OP_FLOATS);
     this.updateCost(i);
     this.markDirty(i);
+    for (const cont of turning) {
+      const j = this.reserveOp();
+      if (j < 0) break;
+      this.ops.set(cont, j * OP_FLOATS);
+      this.updateCost(j);
+      this.markDirty(j);
+    }
   }
 
   private addStroke(a: Vec2, b: Vec2, tool: StrokeTool): number {
@@ -356,7 +434,8 @@ export class PaperMarblingPlugin implements Plugin {
     this.closeOpenStrokes();
     const i = this.reserveOp();
     if (i < 0) return;
-    this.ops.set([OP_SWIRL, w.x, w.y, w.radius, this.time, w.dur, w.angle, 0, 0, 0, 0, 0], i * OP_FLOATS);
+    // turn eased from 0 to 1 (o+7, o+8); a split narrows that range
+    this.ops.set([OP_SWIRL, w.x, w.y, w.radius, this.time, w.dur, w.angle, 0, 1, 0, 0, 0], i * OP_FLOATS);
     this.updateCost(i);
     this.markDirty(i);
   }
@@ -428,11 +507,18 @@ export class PaperMarblingPlugin implements Plugin {
       if (s.pts.length >= 256) s.pts = s.pts.filter((_, k) => k % 2 === 1);
       s.pts.push(pos);
       const o = s.op * OP_FLOATS;
-      const before = this.strokeBox(s.anchor, [this.ops[o + 4], this.ops[o + 5]], s.tool);
+      const oldEnd: Vec2 = [this.ops[o + 4], this.ops[o + 5]];
       this.ops[o + 4] = pos[0];
       this.ops[o + 5] = pos[1];
+      // Extending a stroke along its own line only changes the paint near the
+      // new piece (splits compose exactly); a slight turn moves the whole op
+      const offLine = Math.abs((oldEnd[0] - s.anchor[0]) * dy - (oldEnd[1] - s.anchor[1]) * dx) / len;
+      const before = this.strokeBox(s.anchor, oldEnd, s.tool);
       const after = this.strokeBox(s.anchor, pos, s.tool);
-      this.markDirty(s.op, before && after ? unionBox(before, after) : null);
+      const box = offLine * this.pxPerBU < 0.02
+        ? this.strokeBox(oldEnd, pos, s.tool)
+        : before && after ? unionBox(before, after) : null;
+      this.markDirty(s.op, box);
       return;
     }
     // Close the op at its current end and start the next from there
@@ -599,19 +685,30 @@ export class PaperMarblingPlugin implements Plugin {
       if (this.bakeCount >= FLATTEN_AT) this.flatten();
       const settled = this.settledCount();
       const pending = settled - this.bakeCount;
-      if (pending >= BAKE_MIN_OPS || (pending > 0 && this.time - this.lastOpChange > BAKE_QUIET)) {
-        const dst = this.buildTarget(gl);
+      // After a resize the kept bake is sampled off-grid until one at the
+      // new size lands, so a size mismatch is pending work too
+      const cur = this.bakes[this.bakeCur];
+      const stale = this.bakeCount > 0 && !!cur && (cur.h !== this.bakeH || (!cur.wide && cur.w !== this.bakeW));
+      const still = pending > 0 && (settled === this.opCount || this.time - this.lastOpChange > BAKE_QUIET);
+      if (pending >= BAKE_MIN_OPS || still || stale) {
+        const dst = settled >= FLATTEN_AT ? this.wideTarget(gl) : this.buildTarget(gl);
         if (dst) this.building = { target: settled, row: 0, dst };
       }
     }
     const b = this.building;
     if (!b) return;
 
-    // Back off only when frames run well past the refresh interval, and grow
-    // only when the last strip was actually held back by the budget
+    // Back off when frames run well past the refresh interval, remembering
+    // the level that missed; grow (up to it) only when the last strip was
+    // actually held back by the budget
     const ft = this.frameTime;
-    if (ft > 1.5 * this.refresh) this.bakeBudget = Math.max(2e6, this.bakeBudget * 0.8);
-    else if (ft > 0 && ft <= 1.2 * this.refresh && this.lastStripLimited) this.bakeBudget = Math.min(4e8, this.bakeBudget * 1.08);
+    if (ft > 1.5 * this.refresh) {
+      this.bakeBudget = Math.max(2e6, this.bakeBudget * 0.8);
+      this.missCap = this.bakeBudget * 0.9;
+    } else if (ft > 0 && ft <= 1.2 * this.refresh && this.lastStripLimited) {
+      this.bakeBudget = Math.min(4e8, this.missCap, this.bakeBudget * 1.08);
+    }
+    this.missCap = Math.min(4e8, Math.max(this.missCap, 2e6) * 1.003);
     // Finishing the bake is what makes the live pass cheap again, so never
     // give it less work than the live replay it will remove is costing
     const budget = Math.min(4e8, Math.max(this.bakeBudget, this.bakeableLive));
@@ -621,6 +718,7 @@ export class PaperMarblingPlugin implements Plugin {
     this.lastStripLimited = wanted < remaining;
     const rows = Math.min(remaining, Math.max(Math.ceil(b.dst.h / BAKE_MAX_FRAMES), wanted, 1));
 
+    this.uploadOps(gl); // a flatten above may have shifted the op list
     gl.bindFramebuffer(gl.FRAMEBUFFER, b.dst.fbo);
     gl.viewport(0, 0, b.dst.w, b.dst.h);
     gl.enable(gl.SCISSOR_TEST);
@@ -666,6 +764,10 @@ export class PaperMarblingPlugin implements Plugin {
     this.bakeCount = 0;
     this.building = null;
     this.userStroke = null;
+    this.dragging = false;
+    this.rebaseDrag = false;
+    this.combStart = null;
+    this.combDir = null;
     this.recipe = null;
     if (this.flat) this.doomed.push(this.flat);
     this.flat = null;
@@ -682,10 +784,13 @@ export class PaperMarblingPlugin implements Plugin {
     const now = performance.now() / 1000;
     this.frameTime = this.lastNow ? now - this.lastNow : 0;
     this.lastNow = now;
-    if (this.frameTime > 0) {
-      // Fastest frame seen ≈ refresh interval; drift up very slowly so one
-      // stray short interval can't pin it
-      this.refresh = Math.min(this.refresh * 1.0005, Math.max(this.frameTime, 1 / 240));
+    // Refresh interval: shortest recent rAF delta. Those come from vsync
+    // timestamps, so a late callback can't make one look short.
+    if (dt > 0) {
+      this.dtHist[this.dtIdx++ % this.dtHist.length] = dt;
+      let m = Infinity;
+      for (const v of this.dtHist) if (v > 0 && v < m) m = v;
+      this.refresh = Math.max(m, 1 / 240);
     }
     for (const t of this.doomed) this.deleteTarget(gl, t);
     this.doomed = [];
@@ -710,7 +815,7 @@ export class PaperMarblingPlugin implements Plugin {
     if (this.dirtyFull || this.dirtyBox) this.paintPass(gl);
 
     // Composite to screen
-    const showTool = this.dragging && this.tool !== 'drops' && (this.tool !== 'comb' || this.combDir !== null);
+    const showTool = this.dragging && !this.rebaseDrag && this.tool !== 'drops' && (this.tool !== 'comb' || this.combDir !== null);
     const target = showTool || this.recipe?.stroke ? 1 : 0;
     this.toolAlpha += (target - this.toolAlpha) * (1 - Math.exp(-dt / 0.08));
     if (target === 0 && this.toolAlpha < 0.01) this.toolAlpha = 0;
@@ -766,7 +871,7 @@ export class PaperMarblingPlugin implements Plugin {
   }
 
   private stepUser(dt: number) {
-    if (!this.dragging || this.tool === 'drops') return;
+    if (!this.dragging || this.rebaseDrag || this.tool === 'drops') return;
     let target = this.pointer;
     if (this.tool === 'comb') {
       // A rake is pulled straight: lock its heading after a little travel,
@@ -781,6 +886,7 @@ export class PaperMarblingPlugin implements Plugin {
         const square = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
         if (Math.abs(angle - square) < COMB_SNAP) angle = square;
         this.combDir = [Math.cos(angle), Math.sin(angle)];
+        this.stopRecipeStrokes();
         this.toolPos = this.combStart;
         this.userStroke = this.beginStroke(this.combStart, this.userTool());
         this.shownTool = this.userStroke.tool;
@@ -816,10 +922,24 @@ export class PaperMarblingPlugin implements Plugin {
   onGesture(ctx: EngineContext, event: GestureEvent) {
     this.time = ctx.time;
     if (this.printPhase > 0) {
-      if (this.printPhase === 3 && event.type === 'tap') this.endPrint();
+      if (this.printPhase === 3 && (event.type === 'tap' || event.type === 'drag-end')) this.endPrint();
       return;
     }
     const pos = this.toBath(event);
+    if (this.rebaseDrag && this.dragging && event.type === 'drag-move') {
+      // Set the tool down again under the finger in the resized bath
+      this.rebaseDrag = false;
+      this.pointer = pos;
+      this.toolPos = pos;
+      if (this.tool === 'stylus') {
+        this.userStroke = this.beginStroke(pos, this.userTool());
+      } else if (this.tool === 'comb') {
+        this.userStroke = null;
+        this.combStart = pos;
+        this.combDir = null;
+      }
+      return;
+    }
     if (event.type === 'tap') {
       const c = this.nextColor();
       this.addDrop(pos[0], pos[1], this.dropSize * (0.9 + 0.2 * Math.random()), c.rgb, c.alpha);
@@ -828,6 +948,7 @@ export class PaperMarblingPlugin implements Plugin {
     if (event.type === 'drag-start') {
       if (this.tool !== 'drops') this.stopRecipeStrokes();
       this.dragging = true;
+      this.rebaseDrag = false;
       this.pointer = pos;
       this.toolPos = pos;
       this.sprinkleTravel = 0;
@@ -857,8 +978,10 @@ export class PaperMarblingPlugin implements Plugin {
     }
     if (event.type === 'drag-end') {
       this.pointer = pos;
-      // Land exactly where the pointer let go (and lock a quick comb flick)
-      if (this.userStroke || (this.tool === 'comb' && this.combStart)) this.stepUser(1);
+      // Land exactly where the pointer let go (and lock a quick comb flick),
+      // unless a resize lifted the tool and it was never set down again
+      if (!this.rebaseDrag && (this.userStroke || (this.tool === 'comb' && this.combStart))) this.stepUser(1);
+      this.rebaseDrag = false;
       this.dragging = false;
       this.userStroke = null;
       this.combStart = null;
@@ -887,7 +1010,7 @@ export class PaperMarblingPlugin implements Plugin {
       if (this.printT >= 1) {
         this.printPhase = 3;
         this.printT = 1;
-        this.showHint('Tap to skim the bath and start again');
+        this.showHint('Skim the bath and start again');
       }
     }
   }
@@ -899,15 +1022,18 @@ export class PaperMarblingPlugin implements Plugin {
     this.clearBath();
   }
 
+  /** A small button in the table margin under the sheet (tapping the print works too) */
   private showHint(text: string) {
     this.hideHint();
-    const el = document.createElement('div');
+    const el = document.createElement('button');
+    el.type = 'button';
     el.textContent = text;
     el.style.cssText = [
-      'position:fixed', 'left:50%', 'top:64px', 'transform:translateX(-50%)', 'z-index:20',
-      'background:rgba(0,0,0,0.6)', 'color:#eee', 'font:12px system-ui,sans-serif',
-      'padding:6px 12px', 'border-radius:14px', 'pointer-events:none',
+      'position:fixed', 'left:50%', 'bottom:4px', 'transform:translateX(-50%)', 'z-index:20',
+      'background:rgba(0,0,0,0.6)', 'color:#eee', 'font:12px system-ui,sans-serif', 'white-space:nowrap',
+      'padding:4px 12px', 'border:1px solid #3a3a42', 'border-radius:14px', 'cursor:pointer',
     ].join(';');
+    el.addEventListener('click', () => this.endPrint());
     document.body.appendChild(el);
     this.hint = el;
   }

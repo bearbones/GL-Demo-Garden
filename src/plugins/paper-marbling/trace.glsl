@@ -70,16 +70,23 @@ float rimFade(float R, float edgeGrad) {
 // the denser rim stretch and comb with the paint. `edgeGrad` is the screen
 // gradient of the radial coordinate and `stretch` the Jacobian norm; both
 // fade detail out before it would alias.
+// Pale paint shows relative variation more; scale it back so every colour
+// carries about the same visible texture
+float lightFade(vec3 col) {
+  return mix(1.0, 0.45, dot(col, vec3(0.3, 0.59, 0.11)));
+}
+
 vec4 shadeDrop(vec3 col, float alpha, float seed, vec2 local, float R, float edgeGrad, float stretch) {
   float rho = length(local);
+  float fade = lightFade(col);
   // Pigment piles up slightly at the spreading front: a darker rim band
   float rim = mix(0.25, smoothstep(0.8, 1.0, rho), rimFade(R, edgeGrad));
-  col *= 1.0 - RIM * rim;
+  col *= 1.0 - RIM * fade * rim;
   // Uneven pigment: low mottle plus fine grain, faded when compressed
   float cyclesPerPx = stretch / (R * u_pxPerBU);
   float m1 = snoise(local * 1.6 + seed * 31.7) * (1.0 - smoothstep(0.08, 0.25, cyclesPerPx * 1.6));
   float m2 = snoise(local * 5.5 + seed * 17.3) * (1.0 - smoothstep(0.08, 0.25, cyclesPerPx * 5.5));
-  col *= 1.0 + 0.045 * m1 + 0.025 * m2;
+  col *= 1.0 + (0.045 * m1 + 0.025 * m2) * fade;
   return vec4(col * alpha, alpha);
 }
 
@@ -180,6 +187,36 @@ void strokeOp(int i, vec4 o0, inout vec2 p, inout mat2 J) {
   float dtdt = 1.0;
   float dtdh = 0.0;
   bool touched = false;
+
+  // A pass straight across its tines (every user comb, every straight recipe
+  // pass): both nearby tines sweep the same lines in step, so run ONE flow
+  // with the combined drag 1 − (1−κa)(1−κb). It stays below 1 and, unlike
+  // two passes in sequence, composes exactly when the op is split (e.g. by a
+  // drop landing mid-pull).
+  if (abs(sigT) < 1e-6) {
+    if (t < -6.0 * alpha || t > L + 6.0 * alpha) return;
+    vec2 ka = vec2(0.0);
+    vec2 kb = vec2(0.0);
+    float ha = hc - (j0 - mid) * sigH;
+    float hb = hc - (j1 - mid) * sigH;
+    if (abs(ha) < H) ka = crossProfile(ha, k0, rr, c, H);
+    if (j1 != j0 && abs(hb) < H) kb = crossProfile(hb, k0, rr, c, H);
+    float rest = (1.0 - ka.x) * (1.0 - kb.x);
+    float k = 1.0 - rest;
+    if (k < 1e-5) return;
+    float dk = (1.0 - kb.x) * ka.y + (1.0 - ka.x) * kb.y;
+    float s = sqrt(k / rest);
+    float x1 = t - L;
+    float x0 = flowGinv(flowG(x1, s, alpha) + L, k, s, alpha);
+    float igp0 = flowInvGp(x0, k, alpha);
+    dtdt = igp0 / flowInvGp(x1, k, alpha);
+    dtdh = (flowGk(x1, k, s, alpha) - flowGk(x0, k, s, alpha)) * dk * igp0;
+    p += (x0 - t) * m;
+    J = (mat2(1.0) + outerProduct(m, (dtdt - 1.0) * m + dtdh * nrm)) * J;
+    return;
+  }
+
+  // Staggered tines (a sinuous pass): apply them one after the other
   for (int pass = 0; pass < 2; ++pass) {
     float j = pass == 0 ? j1 : j0;
     if (pass == 1 && j0 == j1) break;
@@ -216,9 +253,13 @@ void swirlOp(int i, vec4 o0, inout vec2 p, inout mat2 J) {
   float s2 = o0.w * o0.w;
   float r2 = dot(d, d);
   if (r2 > 9.0 * s2) return;
+  // A swirl split around a newer drop keeps only its share of the turn:
+  // eased progress from o1.w to o2.x (0 → 1 when whole)
   vec4 o1 = opTexel(i, 1);
+  float e1 = opTexel(i, 2).x;
   float u = clamp((u_time - o1.x) / o1.y, 0.0, 1.0);
-  float phi = -o1.z * u * u * (3.0 - 2.0 * u) * exp(-r2 / s2); // inverse: turn back
+  float turned = min(u * u * (3.0 - 2.0 * u), e1) - o1.w;
+  float phi = -o1.z * turned * exp(-r2 / s2); // inverse: turn back
   float cs = cos(phi);
   float sn = sin(phi);
   mat2 R = mat2(cs, sn, -sn, cs);
@@ -291,7 +332,7 @@ vec4 tracePoint(vec2 q, out bool detail) {
       nearPx = sPx;
       vec4 o2 = opTexel(i, 2);
       float rim = mix(0.25, 1.0, rimFade(R, edgeGrad));
-      nearCol = vec4(o2.rgb * (1.0 - RIM * rim) * o1.z, o1.z);
+      nearCol = vec4(o2.rgb * (1.0 - RIM * lightFade(o2.rgb) * rim) * o1.z, o1.z);
     }
     float k = sqrt((r2 - R2) / r2);
     float g = R2 / (k * r2 * r2);
@@ -302,6 +343,7 @@ vec4 tracePoint(vec2 q, out bool detail) {
 
   if (!hit && u_flatRect.z > 0.0 && inRect(u_flatRect, p)) {
     col = sampleRect(u_flat, u_flatRect, p);
+    detail = length(J[0]) + length(J[1]) > 5.0;
   }
   detail = detail || (nearPx < 1.0 && insidePx < 1.0);
   return mix(col, nearCol, 1.0 - clamp(nearPx, 0.0, 1.0));
