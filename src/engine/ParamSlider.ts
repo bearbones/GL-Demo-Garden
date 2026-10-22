@@ -7,122 +7,116 @@ export interface SliderConfig {
   onChange: (value: number) => void;
 }
 
+/** Shared demo controls. The gallery owns placement and visibility. */
 export class ParamSlider {
+  private static nextId = 0;
   private panel: HTMLDivElement;
-  private sliders: Map<string, HTMLInputElement> = new Map();
+  private sliders = new Map<string, { input: HTMLInputElement; update: (notify: boolean) => void }>();
 
   constructor() {
     this.panel = document.createElement('div');
-    this.panel.style.cssText = [
-      'position:fixed',
-      'bottom:16px',
-      'right:16px',
-      'z-index:20',
-      'background:rgba(0,0,0,0.7)',
-      'backdrop-filter:blur(8px)',
-      'border-radius:10px',
-      'padding:12px 16px',
-      'font-family:system-ui,sans-serif',
-      'font-size:12px',
-      'color:#eee',
-      'min-width:200px',
-      'user-select:none',
-    ].join(';');
-    document.body.appendChild(this.panel);
+    this.panel.className = 'param-panel';
+    (document.getElementById('demo-controls') ?? document.body).appendChild(this.panel);
   }
 
   addSlider(config: SliderConfig): number {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
-
+    const row = document.createElement('label');
+    row.className = 'param-slider';
     const label = document.createElement('span');
     label.textContent = config.label;
-    label.style.cssText = 'flex:0 0 90px;text-align:right;opacity:0.8;';
-
     const input = document.createElement('input');
+    input.id = `garden-param-${++ParamSlider.nextId}`;
+    // <output> is labelable too, so the range needs an explicit association.
+    row.htmlFor = input.id;
     input.type = 'range';
     input.min = String(config.min);
     input.max = String(config.max);
     input.step = String(config.step ?? ((config.max - config.min) / 200));
     input.value = String(config.value);
-    input.style.cssText = 'flex:1;accent-color:#8af;height:4px;cursor:pointer;';
-
-    // Enough decimals to show every step (0.005 → 3), never fewer than 2
-    const decimals = config.step ? Math.max(2, Math.min(4, Math.ceil(-Math.log10(config.step) - 1e-9))) : 2;
-    const valueLabel = document.createElement('span');
-    valueLabel.textContent = config.value.toFixed(decimals);
-    valueLabel.style.cssText = 'flex:0 0 42px;text-align:left;font-variant-numeric:tabular-nums;opacity:0.6;';
-
-    input.addEventListener('input', () => {
-      const v = parseFloat(input.value);
-      valueLabel.textContent = v.toFixed(decimals);
-      config.onChange(v);
-    });
-
-    row.appendChild(label);
-    row.appendChild(input);
-    row.appendChild(valueLabel);
+    input.setAttribute('aria-label', config.label);
+    // Decimal places must represent the whole step: 0.25 needs two, not one.
+    const decimals = config.step === undefined ? 2
+      : (config.step.toFixed(6).replace(/0+$/, '').split('.')[1]?.length ?? 0);
+    const valueLabel = document.createElement('output');
+    valueLabel.setAttribute('for', input.id);
+    const update = (notify: boolean) => {
+      const value = Number(input.value);
+      valueLabel.value = value.toFixed(decimals);
+      if (notify) config.onChange(value);
+    };
+    update(false);
+    input.addEventListener('input', () => update(true));
+    row.append(label, valueLabel, input);
     this.panel.appendChild(row);
-    this.sliders.set(config.label, input);
-
+    this.sliders.set(config.label, { input, update });
     return config.value;
   }
 
-  /** A labelled dropdown row, for discrete choices (e.g. simulation mode). */
   addSelect(config: {
     label: string;
     options: { value: string; label: string }[];
     value: string;
     onChange: (value: string) => void;
   }): HTMLSelectElement {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
-
+    const row = document.createElement('label');
+    row.className = 'param-select';
     const label = document.createElement('span');
     label.textContent = config.label;
-    label.style.cssText = 'flex:0 0 90px;text-align:right;opacity:0.8;';
-
     const select = document.createElement('select');
-    select.style.cssText =
-      'flex:1;background:#232329;color:#eee;border:1px solid #3a3a42;border-radius:6px;padding:3px 6px;font:inherit;cursor:pointer;';
+    select.setAttribute('aria-label', config.label);
     for (const opt of config.options) {
-      const o = document.createElement('option');
-      o.value = opt.value;
-      o.textContent = opt.label;
-      select.appendChild(o);
+      const option = document.createElement('option');
+      option.value = opt.value;
+      option.textContent = opt.label;
+      select.appendChild(option);
     }
     select.value = config.value;
     select.addEventListener('change', () => config.onChange(select.value));
-
-    row.appendChild(label);
-    row.appendChild(select);
+    row.append(label, select);
     this.panel.appendChild(row);
     return select;
   }
 
-  /** A row of push buttons, for one-shot actions (e.g. reset). */
   addButtons(buttons: { label: string; onClick: () => void }[]) {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
+    row.className = 'param-buttons';
     for (const config of buttons) {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = config.label;
-      button.style.cssText =
-        'flex:1;background:#232329;color:#eee;border:1px solid #3a3a42;border-radius:6px;padding:4px 8px;font:inherit;cursor:pointer;';
       button.addEventListener('click', config.onClick);
       row.appendChild(button);
     }
     this.panel.appendChild(row);
   }
 
+  addSection(text: string) {
+    const heading = document.createElement('h3');
+    heading.className = 'param-section';
+    heading.textContent = text;
+    this.panel.appendChild(heading);
+  }
+
+  addNote(text: string) {
+    const note = document.createElement('p');
+    note.className = 'param-note';
+    note.textContent = text;
+    this.panel.appendChild(note);
+  }
+
+  setValue(label: string, value: number, notify = false) {
+    const slider = this.sliders.get(label);
+    if (!slider) return;
+    slider.input.value = String(value);
+    slider.update(notify);
+  }
+
   setVisible(visible: boolean) {
-    this.panel.style.display = visible ? '' : 'none';
+    this.panel.hidden = !visible;
   }
 
   getValue(label: string): number {
-    const input = this.sliders.get(label);
-    return input ? parseFloat(input.value) : 0;
+    return Number(this.sliders.get(label)?.input.value ?? 0);
   }
 
   destroy() {

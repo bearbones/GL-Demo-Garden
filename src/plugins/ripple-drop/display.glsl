@@ -12,7 +12,7 @@ uniform float u_squash;       // ellipse foreshortening (1 = round, small = flat
 uniform float u_life;         // ripple lifetime in seconds
 uniform float u_strokeWidth;  // stroke width, normalized to a 700px-tall frame
 uniform float u_rain;         // 0..1 ambient rain amount
-uniform float u_boilRate;     // cel redraws per second (line boil)
+uniform float u_inkWobble;    // 0..1 restrained, smoothly evolving ink texture
 
 // Each ripple: x, y in UV (origin bottom-left), birth time, kind + seed.
 // kind = floor(w): 0 = small rain ring, 1 = tap rings, 2 = spiral.
@@ -28,20 +28,18 @@ const vec3 STROKE_COLOR = vec3(0.900, 0.935, 0.905);
 
 // One hand-inked elliptical ring. Positions are pre-squashed; `dir` is the
 // unit vector around the ring so noise wraps without a seam at ±π.
-// `tick` re-seeds every noise term: each boil tick the line is "redrawn",
-// so wobble, thickness, and gaps jump like cels animated on threes.
-// `wobAmp`/`wobFreq` grow with ring age; `gapBias` fragments old rings.
-float ringStroke(float rPix, float radiusPix, float widthPx, vec2 dir, float seed,
-                 float gapCount, float gapPhase, float wobAmp, float wobFreq, float gapBias, float tick) {
-  float ts = tick * 29.7;
-  // Wobble the radius so the ellipse reads as drawn, not computed
-  radiusPix *= 1.0 + wobAmp * snoise(dir * wobFreq + seed * 37.0 + ts);
-  // Stroke thickness varies along the ring
-  float w = widthPx * (0.85 + 0.35 * snoise(dir * 2.3 + seed * 53.0 + ts)) * 0.5;
+// Ink follows the ring's angular coordinates, with a slow continuous drift.
+// Expansion and current always use real time; the texture never re-seeds.
+float ringStroke(float rPix, float radiusPix, float widthPx, vec2 dir, float theta,
+                 float seed, float gapCount, float gapPhase, float wobAmp, float gapBias, float inkTime) {
+  // Almost every pixel is far from this thin stroke. Reject it before
+  // evaluating noise, using a conservative bound on radial displacement.
+  if (abs(rPix - radiusPix) > radiusPix * wobAmp + widthPx + 2.0) return 0.0;
+  radiusPix *= 1.0 + wobAmp * snoise(dir * 1.6 + seed * 37.0 + inkTime);
+  float w = widthPx * (1.0 + u_inkWobble * 0.18 * snoise(dir * 2.3 + seed * 53.0 + inkTime)) * 0.5;
   float alpha = 1.0 - smoothstep(w - 0.8, w + 0.8, abs(rPix - radiusPix));
-  // Ink gaps: the ellipse is deliberately incomplete
-  float theta = atan(dir.y, dir.x);
-  float g = sin(theta * gapCount + gapPhase) + 0.8 * snoise(dir * 1.2 + seed * 71.0 + ts);
+  // Sparse, persistent gaps keep the painted character without flickering.
+  float g = sin(theta * gapCount + gapPhase) + 0.25 * snoise(dir * 1.2 + seed * 71.0 + inkTime);
   return alpha * smoothstep(-0.80 + gapBias, -0.40 + gapBias, g);
 }
 
@@ -77,13 +75,8 @@ void main() {
     float kind = floor(rp.w);
     float seed = fract(rp.w);
 
-    // Cel boil clock: the ripple advances in discrete redraws a few times a
-    // second, phase-offset per ripple so the pond doesn't tick in unison.
-    // max() keeps a fresh tap visible immediately instead of one tick late.
-    float phase = seed * 0.93;
-    float tick = floor(age * u_boilRate + phase);
-    float ageQ = max((tick - phase) / u_boilRate, 0.0);
-    float lifeFrac = ageQ / u_life;
+    float lifeFrac = age / u_life;
+    float inkTime = age * 0.045;
 
     // Perspective: ripples higher in frame are smaller and flatter
     float persp = mix(1.20, 0.65, rp.y);
@@ -91,17 +84,22 @@ void main() {
 
     // Slight pond current: rings drift off-center as they expand
     float da = seed * 37.0;
-    vec2 center = vec2(rp.x * aspect, rp.y) + vec2(cos(da), sin(da) * 0.5) * ageQ * 0.006;
+    vec2 center = vec2(rp.x * aspect, rp.y) + vec2(cos(da), sin(da) * 0.5) * age * 0.006;
 
     vec2 p = uvA - center;
     p.y /= squash;
     float r = length(p);
+    float maxR = (kind < 0.5 ? 0.068 : (kind < 1.5 ? 0.165 : 0.15)) * persp;
+    if (kind < 1.5) maxR *= 0.75 + 0.5 * seed;
+    // The entire ripple is local: skip direction, angle, and all ink noise
+    // outside its largest possible footprint. No derivatives are needed.
+    if (r > maxR * 1.016 + (widthPx + 2.0) / pxScale) continue;
     float rPix = r * pxScale;
     vec2 dir = p / max(r, 1e-5);
+    float theta = atan(dir.y, dir.x);
 
     if (kind < 1.5) {
       // ── Concentric ring drop (rain = 2 rings, tap = 3) ─────────────
-      float maxR = (kind < 0.5 ? 0.068 : 0.165) * persp * (0.75 + 0.5 * seed);
       float rings = kind < 0.5 ? 2.0 : 3.0;
       float dim = kind < 0.5 ? 0.85 : 1.0;
 
@@ -111,16 +109,15 @@ void main() {
         if (u <= 0.0 || u >= 1.0) continue;
         float radius = maxR * (1.0 - (1.0 - u) * (1.0 - u));  // ease-out
         float env = smoothstep(0.0, 0.05, u) * (1.0 - smoothstep(0.72, 1.0, u));
-        // Young rings are clean; old rings squiggle, thin out, and fragment
-        float wobAmp = mix(0.015, 0.065, u);
-        float wobFreq = mix(1.5, 3.0, u);
-        float gapBias = 0.22 * smoothstep(0.4, 1.0, u);
+        // Keep the ellipse readable throughout its life; aging primarily
+        // thins and fades it rather than turning it into a wavy contour.
+        float wobAmp = u_inkWobble * mix(0.004, 0.012, u);
+        float gapBias = 0.12 * smoothstep(0.4, 1.0, u);
         float width = widthPx * mix(1.05, 0.70, u);
         float gapCount = 2.0 + floor(mod(seed * 13.0 + float(k), 2.0));
-        // Gaps re-ink somewhere else on every boil tick
-        float gapPhase = seed * 6.2832 + float(k) * 2.4 + tick * 2.399;
-        stroke += ringStroke(rPix, radius * pxScale, width, dir, seed + float(k) * 0.31,
-                             gapCount, gapPhase, wobAmp, wobFreq, gapBias, tick) * env * dim;
+        float gapPhase = seed * 6.2832 + float(k) * 2.4;
+        stroke += ringStroke(rPix, radius * pxScale, width, dir, theta, seed + float(k) * 0.31,
+                             gapCount, gapPhase, wobAmp, gapBias, inkTime) * env * dim;
       }
 
       // Impact flash: a small dot right after the drop lands
@@ -129,12 +126,11 @@ void main() {
       }
     } else {
       // ── Spiral ripple (anime shorthand for dense concentric rings) ──
-      float ts = tick * 29.7;
       float turns = 3.0;
-      float R = 0.15 * persp * (1.0 - pow(1.0 - min(lifeFrac * 1.25, 1.0), 2.0));
-      float thetaN = atan(p.y, p.x) / 6.2832 + 0.5;  // 0..1 around
-      // Redrawn wobble, growing squigglier as the spiral ages
-      float rWob = r * (1.0 + mix(0.015, 0.05, lifeFrac) * snoise(dir * mix(1.6, 2.8, lifeFrac) + seed * 37.0 + ts));
+      float R = maxR * (1.0 - pow(1.0 - min(lifeFrac * 1.25, 1.0), 2.0));
+      if (r > R * 1.016 + (widthPx + 2.0) / pxScale) continue;
+      float thetaN = theta / 6.2832 + 0.5;  // 0..1 around
+      float rWob = r * (1.0 + u_inkWobble * 0.012 * snoise(dir * 1.6 + seed * 37.0 + inkTime));
       float rq = rWob / max(R, 1e-4);
       float m = rq * turns - thetaN;
       float k = floor(m + 0.5);
@@ -142,13 +138,12 @@ void main() {
 
       if (k >= 0.0 && k < turns && tAlong < 1.0) {
         float dPix = abs(m - k) / turns * R * pxScale;
-        float w = widthPx * (0.70 + 0.45 * snoise(dir * 2.1 + seed * 53.0 + ts)) * 0.5;
+        float w = widthPx * (1.0 + u_inkWobble * 0.18 * snoise(dir * 2.1 + seed * 53.0 + inkTime)) * 0.5;
         float alpha = 1.0 - smoothstep(w - 0.8, w + 0.8, dPix);
         // Taper both ends of the spiral stroke
         alpha *= smoothstep(0.02, 0.12, tAlong) * (1.0 - smoothstep(0.80, 1.0, tAlong));
-        // Sparse ink gaps, re-inked on every boil tick
-        float theta = atan(dir.y, dir.x);
-        float g = sin(theta * 2.0 + seed * 6.2832 + k * 1.7 + tick * 2.399) + 0.8 * snoise(dir * 1.3 + seed * 71.0 + ts);
+        // Sparse ink gaps remain attached to the expanding spiral.
+        float g = sin(theta * 2.0 + seed * 6.2832 + k * 1.7) + 0.25 * snoise(dir * 1.3 + seed * 71.0 + inkTime);
         alpha *= smoothstep(-0.9 + 0.2 * smoothstep(0.5, 1.0, lifeFrac), -0.5, g);
         // Whole spiral fades in fast, out slow
         alpha *= smoothstep(0.0, 0.04, lifeFrac) * (1.0 - smoothstep(0.60, 1.0, lifeFrac));
@@ -166,9 +161,7 @@ void main() {
     float rn = hash21(vec2(cx, 17.0));
     if (rn > 1.0 - 0.30 * u_rain) {
       float speed = 1.6 + rn * 1.2;
-      // Streaks advance on the boil clock too, like redrawn rain cels
-      float tQ = floor(u_time * u_boilRate) / max(u_boilRate, 1.0);
-      float f = fract(v_uv.y + tQ * speed + rn * 31.0);
+      float f = fract(v_uv.y + u_time * speed + rn * 31.0);
       float dash = smoothstep(0.00, 0.03, f) * (1.0 - smoothstep(0.10, 0.16, f));
       float xProf = 1.0 - smoothstep(0.0, 0.10, abs(fract(uvA.x * cells) - 0.5));
       color += vec3(0.35, 0.40, 0.40) * dash * xProf * 0.10 * u_rain;

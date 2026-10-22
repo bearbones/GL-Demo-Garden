@@ -1029,6 +1029,7 @@ export class PaperMarblingPlugin implements Plugin {
   private showHint(text: string) {
     this.hideHint();
     const el = document.createElement('button');
+    el.className = 'demo-overlay';
     el.type = 'button';
     el.textContent = text;
     el.style.cssText = [

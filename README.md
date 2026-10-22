@@ -6,17 +6,20 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 
 | Demo | Effect Type | Interaction |
 |------|-------------|-------------|
-| **Wobbly Cells** | Procedural Voronoi cell animation | Mouse moves the warp field |
-| **Turing Patterns** | Gray-Scott reaction-diffusion | Click/drag to seed chemical B |
-| **Bubble Physics** | Vertex-displaced bubble simulation | Passive; bubbles float and collide |
-| **Ripple Drop** | Hand-inked rain ripples (Windaria 1986 style) | Tap for rings (sometimes a spiral); drag to dot a trail; Rain slider for ambient drops |
+| **Wobbly Cells** | Animated Voronoi mosaic | Gather/spread lens, four palettes, density, seams, light, drift, freeze and reshuffle |
+| **Turing Patterns** | Gray-Scott reaction-diffusion | Plant/erase brushes, chemistry recipes, palettes, seed layouts, pause, step, reseed and clear |
+| **Bubble Physics** | Instanced rising disks | Press and drag to gather and disturb bubbles |
+| **Ripple Drop** | Smoothly expanding inked pond ripples | Choose rings or spirals; tap or drag; tune rain, perspective, lifetime, stroke and subtle ink wobble; clear pond |
 | **Laser Bird** | 80s anime light-being with multi-pass bloom | Tap/drag to move; Form slider morphs bird ↔ swallowtail butterfly |
-| **Boat Wake** | Kelvin wake foam advection | Passive; foam trails behind boat |
+| **Sea Melt** | Flowing foam contours | Tune warp, crest width/count and drift |
+| **Glass Water** | Layered water contours | Tune warp, line widths, drift and crest count |
 | **Stone Break** | Procedural rock fracture — four switchable models: Voronoi faults, phase-field-style stress damage, Weibull random-fuse breakdown, and Breaking-Good-style precomputed fracture modes | Tap to crack; repeated taps deepen and extend the network until the slab shatters and falls away. Model dropdown + per-model tuning sliders |
 | **Lighthouse Vigil** | Cel-shaded night seascape: rotating lighthouse beam over a rocking sailboat, moonlit cliff and posterized water | Passive; sliders for beam speed/width, swell, and haze |
 | **Paper Marbling** | Ebru / suminagashi: paint floating on a size bath. Drops push older paint into rings; a stylus or comb drags it into hearts, chevrons, and feathers. Exact backward replay of invertible ops, so combed edges never blur | Tap to drop paint; drag to pull the stylus (or a straight comb, or sprinkle drops). Pattern menu plays the classics (Bullseyes, Stone, Gel-gel, Chevron, Nonpareil, Bouquet, Suminagashi); Print lays paper on the bath |
 
-Navigate between demos using the dropdown in the top bar, or by setting the URL hash directly:
+Open the **Demo Garden** drawer to switch demos and adjust their tools. It starts collapsed on phones. **Hide**, **H**, or **Escape** hides the interface; the small **Controls** tab or **H** brings it back. Opening, closing and hiding controls leave the full-size canvas and simulation state intact. **Restart** restores the active demo's defaults. **Full screen** is available when the browser supports it.
+
+You can also set the URL hash directly:
 
 ```
 http://localhost:5173/#ripple-drop
@@ -31,6 +34,16 @@ npm run dev      # Vite dev server at http://localhost:5173
 npm run build    # TypeScript check + production bundle
 npm run preview  # Preview the production build locally
 ```
+
+Verification:
+
+```bash
+npm run test:cells          # 24,000-case nearest-cell oracle and original-bug negative control
+npx playwright install chromium
+npm run test:browser        # Production build, all-demo WebGL smoke and desktop/mobile control checks
+```
+
+Browser checks use Chromium's software WebGL renderer and write screenshots to `/tmp/gl-demo-garden-checks` (override with `ARTIFACT_DIR`). These verify rendering and interaction; they do not establish hardware GPU or real-phone frame rates.
 
 **Requirements**: A browser with WebGL2 and `EXT_color_buffer_float` support (all modern browsers qualify). The compute-heavy demos (e.g. Turing Patterns) run simulation grids at half resolution to stay GPU-friendly.
 
@@ -50,10 +63,11 @@ npm run preview  # Preview the production build locally
 ```
 src/
 ├── main.ts                  # Plugin registry and navigation UI
+├── style.css                # Shared drawer, controls and mobile layout
 ├── engine/
 │   ├── Engine.ts            # WebGL2 context, RAF loop, plugin lifecycle
 │   ├── InputManager.ts      # Unified mouse/touch gesture handling
-│   ├── ParamSlider.ts       # Live parameter slider UI overlay
+│   ├── ParamSlider.ts       # Labelled sliders, selects, actions and sections in the shared drawer
 │   ├── gl-utils.ts          # Shader compilation and program linking
 │   └── types.ts             # EngineContext, GestureEvent interfaces
 ├── plugin/

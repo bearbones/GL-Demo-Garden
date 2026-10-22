@@ -10,7 +10,11 @@ uniform float u_feed;
 uniform float u_kill;
 uniform float u_dt;
 uniform vec2 u_mouse;
+uniform vec2 u_mouseFrom;
 uniform float u_mouseDown;
+uniform float u_aspect;
+uniform float u_brushRadius;
+uniform float u_erase;
 
 void main() {
   // Sample current state: r=A concentration, g=B concentration
@@ -40,10 +44,20 @@ void main() {
   float newA = A + (dA * lapA - reaction + u_feed * (1.0 - A)) * u_dt;
   float newB = B + (dB * lapB + reaction - (u_kill + u_feed) * B) * u_dt;
 
-  // Mouse seeds chemical B
-  float mouseDist = length(v_uv - u_mouse);
-  float seed = u_mouseDown * 0.9 * exp(-mouseDist * mouseDist * 800.0);
-  newB += seed;
+  // Screen-space capsule: circular brushes and continuous strokes on any aspect.
+  // Radius is a fraction of the shorter canvas side.
+  vec2 metric = vec2(u_aspect, 1.0) / min(u_aspect, 1.0);
+  vec2 p = (v_uv - u_mouseFrom) * metric;
+  vec2 segment = (u_mouse - u_mouseFrom) * metric;
+  float along = clamp(dot(p, segment) / max(dot(segment, segment), 1e-8), 0.0, 1.0);
+  float mouseDist = length(p - along * segment);
+  float brush = u_mouseDown * (1.0 - smoothstep(u_brushRadius * 0.6, u_brushRadius, mouseDist));
+  if (u_erase > 0.5) {
+    newA = mix(newA, 1.0, brush);
+    newB *= 1.0 - brush;
+  } else {
+    newB = max(newB, brush * 0.9);
+  }
 
   fragColor = vec4(clamp(newA, 0.0, 1.0), clamp(newB, 0.0, 1.0), 0.0, 1.0);
 }

@@ -3,74 +3,38 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#292439" />
   <title>GL Demo Garden</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-    body { display: flex; flex-direction: column; }
-
-    #topbar {
-      flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 0 16px;
-      height: 48px;
-      background: #16161a;
-      border-bottom: 1px solid #2a2a31;
-      font-family: system-ui, sans-serif;
-      color: #eee;
-      user-select: none;
-    }
-    #topbar h1 {
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      white-space: nowrap;
-    }
-    #topbar label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: #aaa;
-      min-width: 0;
-    }
-    #topbar select {
-      appearance: none;
-      background: #232329 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;
-      color: #eee;
-      border: 1px solid #3a3a42;
-      border-radius: 8px;
-      padding: 6px 30px 6px 12px;
-      font: inherit;
-      font-size: 13px;
-      cursor: pointer;
-      max-width: 60vw;
-      text-overflow: ellipsis;
-    }
-    #topbar select:hover { border-color: #55555f; }
-    #topbar select:focus-visible { outline: 2px solid #8af; outline-offset: 1px; }
-
-    #stage { flex: 1 1 auto; position: relative; min-height: 0; }
-  </style>
 </head>
 <body>
-  <header id="topbar">
-    <h1>GL Demo Garden</h1>
-    <label>
-      Demo
-      <select id="demo-select" aria-label="Switch demo"></select>
-    </label>
-  </header>
-  <div id="stage"></div>
-  <!-- Fixed overlay: unhiding it must not reflow #stage (a stage resize
-       resets the running demo's simulation state) -->
-  <p id="gl-error" style="position:fixed;top:48px;left:0;right:0;z-index:30;background:rgba(0,0,0,0.85);color:#fff;font-family:system-ui,sans-serif;padding:2rem;display:none;"></p>
+  <main id="stage" aria-label="Interactive demo"></main>
+  <div id="garden-ui">
+    <header class="garden-bar">
+      <button id="drawer-toggle" aria-controls="garden-drawer" aria-expanded="true" title="Open or close tools">
+        <svg class="garden-mark" viewBox="0 0 28 28" aria-hidden="true"><path d="M14 24V12M14 17C4 18 3 10 4 6c8-1 12 3 10 11ZM14 12c-1-7 4-10 10-9 1 6-2 11-10 9Z"/></svg>
+        <span>Demo Garden</span><span class="toggle-glyph" aria-hidden="true">−</span>
+      </button>
+      <button id="hide-ui" title="Hide interface (H)" aria-label="Hide interface">Hide <kbd>H</kbd></button>
+    </header>
+    <aside id="garden-drawer" aria-label="Demo tools">
+      <div class="demo-picker">
+        <label for="demo-select">Now playing</label>
+        <select id="demo-select" aria-label="Switch demo"></select>
+        <p id="demo-hint"></p>
+      </div>
+      <div id="demo-controls"></div>
+      <footer class="garden-footer">
+        <button id="reset-demo" title="Restart this demo with its default settings">Restart</button>
+        <button id="fullscreen" aria-pressed="false">Full screen</button>
+      </footer>
+    </aside>
+  </div>
+  <button id="restore-ui" hidden aria-label="Show controls" title="Show controls (H)">Controls <kbd>H</kbd></button>
+  <p id="gl-error" role="alert" hidden></p>
   <script>
     window.addEventListener('error', function(e) {
       var el = document.getElementById('gl-error');
-      if (el) { el.textContent = 'Error: ' + e.message; el.style.display = 'block'; }
+      if (el) { el.textContent = 'The demo could not render: ' + e.message; el.hidden = false; }
     });
   </script>
   <script type="module" src="/src/main.ts"></script>

@@ -11,7 +11,7 @@ This document covers the engine internals, the plugin lifecycle, the two renderi
 1. Creates a `<canvas>` and appends it to the container (`document.body` by default).
 2. Requests a WebGL2 context with `alpha: false` and `antialias: false` — both disabled deliberately so the GPU skips alpha compositing and MSAA resolve, keeping each frame as cheap as possible.
 3. Instantiates `InputManager` to translate raw pointer events into normalized `GestureEvent` objects.
-4. Adds a `resize` listener that adjusts canvas physical pixels to match CSS pixels × `devicePixelRatio`, then calls `gl.viewport`.
+4. Checks canvas CSS size × `devicePixelRatio` at the beginning of each frame, resizing before rendering and notifying the plugin through `resize()`.
 5. Kicks off the `requestAnimationFrame` loop.
 
 ### EngineContext
@@ -118,7 +118,7 @@ This avoids reading and writing the same texture in the same draw call (which is
 
 **Resize**: `PingPongFBO.resize()` destroys and recreates both textures. Plugins that need to resize (e.g. on window resize) call this from their render loop when canvas dimensions change.
 
-**Initial data**: The constructor accepts an `ArrayBufferView | null`. Passing `null` leaves textures zeroed (GPU default). Turing Patterns seeds initial state via a temporary program rendered into both ping-pong slots before the main loop starts.
+**Initial data**: The constructor accepts an `ArrayBufferView | null`. Passing `null` leaves textures zeroed (GPU default). Turing Patterns keeps a seed program for initialization, reseeding and clearing, always writing both ping-pong slots.
 
 #### Multi-Step Compute
 
@@ -154,18 +154,20 @@ All positions are normalized to `[0, 1]` in CSS-pixel space (origin top-left). D
 
 ## Parameter Sliders
 
-`src/engine/ParamSlider.ts` creates a fixed-position DOM overlay with `<input type="range">` sliders. Plugins that expose tuneable parameters (e.g. Ripple Drop's damping, wave speed, stroke width) call:
+`src/engine/ParamSlider.ts` mounts labelled controls inside `#demo-controls`. The gallery owns the floating drawer and its visibility; plugins own their panel's lifetime. `src/style.css` styles every demo consistently. The canvas fills the viewport independently, so toggling controls does not trigger a simulation resize. Plugins call:
 
 ```ts
 this.sliders = new ParamSlider();
 this.sliders.addSlider({
-  label: 'Damping',
-  min: 0.98, max: 1.0, value: 0.995, step: 0.001,
-  onChange: (v) => { this.damping = v; },
+  label: 'Ink wobble',
+  min: 0, max: 1, value: 0.2, step: 0.05,
+  onChange: (v) => { this.inkWobble = v; },
 });
 ```
 
 The slider DOM is removed in `destroy()` via `this.sliders.destroy()`, so it doesn't linger when switching demos.
+
+`addSelect`, `addButtons`, `addSection` and `addNote` provide discrete choices, actions and structure. `setValue(label, value, notify = false)` synchronizes a slider and its readout when applying a recipe without recursively invoking its callback. Plugin-specific overlays outside the drawer should use the `demo-overlay` class so the gallery's hide action includes them.
 
 ---
 
@@ -218,7 +220,7 @@ Higher-level utilities that combine SDF geometry with noise to produce hand-draw
 
 ### Wobbly Cells
 
-Single fragment shader extending `FragmentShaderPlugin`. Uses domain-warped Voronoi to generate a cell structure that breathes and shifts over time. `u_mouse` skews the warp field, making cells lean away from the cursor.
+Single fragment shader extending `FragmentShaderPlugin`. A smooth pointer lens warps the sampling position, while animated Voronoi centers remain inside their own tiles. The 5×5 candidate search covers both nearest centers throughout the supported wobble range, avoiding tile-boundary discontinuities from the previous displaced-center 3×3 search. `scripts/check-cells.mjs` checks this against a larger independent neighborhood and retains the old behavior as a negative control. Palette, density, seams, light and motion are adjustable; the integrated animation phase prevents speed changes from jumping in time.
 
 ### Turing Patterns (Gray-Scott)
 
@@ -233,11 +235,13 @@ The Gray-Scott model simulates two chemicals, **A** and **B**, reacting and diff
 - `f` — feed rate (how fast A is replenished from outside)
 - `k` — kill rate (how fast B is removed)
 
-The default preset (`f = 0.0545`, `k = 0.062`) produces coral-growth-like branching patterns. Different `(f, k)` values produce radically different morphologies — spots, stripes, spirals, worm-like labyrinths.
+The default preset (`f = 0.037`, `k = 0.060`) produces the original gold labyrinth. The recipe menu also offers coral, dappled and dividing spots. Feed/removal controls allow custom chemistry; the palette changes only the display.
 
 The Laplacian `∇²` is approximated on the pixel grid with a 3×3 stencil weighted `[0.05, 0.2, 0.05 / 0.2, -1, 0.2 / 0.05, 0.2, 0.05]` (a discrete approximation that gives isotropic diffusion).
 
 The display shader maps the B concentration to a colour gradient. Clicking seeds a patch of high-B concentration, which then interacts with the existing pattern.
+
+The plant/erase brush follows a screen-space capsule so fast drags join continuously and brushes stay circular on portrait and landscape canvases. A tap is consumed once. While paused, drawing uses one compute pass with `u_dt = 0`, leaving chemistry outside the brush unchanged; Step advances one selected batch and remains paused. Seed layout changes, Clear and Reseed initialize both textures. Growth still uses iterations per rendered frame (12 by default).
 
 ### Ripple Drop (Hand-Inked Rain)
 
@@ -249,7 +253,7 @@ Three ripple kinds:
 
 - **Rain drop** (`kind 0`): two small concentric rings. Spawned ambiently at a framerate-independent rate set by the Rain slider, and dotted along drag paths.
 - **Tap** (`kind 1`): three larger staggered rings plus a brief impact dot at birth.
-- **Spiral** (`kind 2`): one continuous three-turn spiral stroke — the classic anime shorthand for dense concentric ripples. Taps have a 30% chance to spawn one.
+- **Spiral** (`kind 2`): one continuous three-turn spiral stroke, selected explicitly with the Mark control. Rings are the default.
 
 Every ring is drawn with the ingredients that make it read as inked rather than computed:
 
@@ -257,8 +261,10 @@ Every ring is drawn with the ingredients that make it read as inked rather than 
 - **Ease-out expansion**: radius follows `1 − (1−u)²`, fast at birth and decelerating, with rings in a set staggered in time.
 - **Hand wobble**: the radius and stroke width are modulated by simplex noise sampled *on the ring's unit circle* (`snoise(dir * k + seed)`), which varies around the ring without a seam at ±π.
 - **Ink gaps**: an angular sine-plus-noise mask leaves 2–3 deliberate breaks per ring, so ellipses are incomplete the way a fast brush pass is.
-- **Line boil**: each ripple advances on a quantized redraw clock (Boil Rate slider, default 8 Hz, phase-offset per ripple). Every tick re-seeds the wobble, stroke-width, and gap noise — the line is "redrawn" like cels animated on threes, rather than one frozen shape dilating outward.
-- **Aging**: wobble amplitude and frequency grow with ring age while stroke width thins and gaps widen, so young rings are clean ellipses and old rings squiggle apart before fading. A slight seed-directed drift pulls rings off-center as they expand, like a pond current.
+- **Continuous motion**: expansion, current and rain use unquantized time. Ink noise drifts slowly and gaps remain anchored to the ring; Ink wobble controls its low-amplitude irregularity independently from motion.
+- **Aging**: rings thin, gently fragment and fade while retaining their elliptical shape. A slight seed-directed current moves their centers.
+
+The shader rejects pixels outside each ripple's largest possible footprint, then rejects pixels outside a conservative stroke band before evaluating ring noise. Clear pond empties the ripple list and stops ambient rain for a clean drawing surface.
 
 The pond itself is flat gouache: a tonal gradient with soft `fbm` blotches, a sky-reflection patch, and a gentle edge vignette. When the Rain slider is up, thin falling streak dashes are composited at low alpha.
 

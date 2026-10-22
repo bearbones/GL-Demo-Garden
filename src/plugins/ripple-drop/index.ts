@@ -15,7 +15,6 @@ const KIND_SMALL = 0;  // rain drop: 2 small rings
 const KIND_TAP = 1;    // tap: 3 larger rings
 const KIND_SPIRAL = 2; // anime spiral shorthand for dense concentric rings
 
-const SPIRAL_TAP_CHANCE = 0.3;
 const RAIN_MAX_DROPS_PER_SEC = 10;
 const DRAG_SPAWN_SPACING = 0.07; // UV distance between drops along a drag
 
@@ -39,7 +38,8 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
   private squash = 0.35;
   private life = 4.5;
   private strokeWidth = 2.6;
-  private boilRate = 8; // cel redraws per second (line boil)
+  private inkWobble = 0.2;
+  private mark: 'rings' | 'spiral' = 'rings';
 
   // Spawn state
   private rainAccum = 0;
@@ -53,9 +53,29 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
     super.init(ctx);
     this.ripples = [];
     this.rainAccum = 0;
+    this.lastDragSpawn = null;
     this.locs = null;
 
     this.sliders = new ParamSlider();
+    this.sliders.addNote('Tap to place a mark; drag to leave a trail. Clear pond also stops the rain.');
+    this.sliders.addSelect({
+      label: 'Mark', value: this.mark,
+      options: [
+        { value: 'rings', label: 'Rings' },
+        { value: 'spiral', label: 'Spiral' },
+      ],
+      onChange: (value) => { this.mark = value === 'spiral' ? 'spiral' : 'rings'; },
+    });
+    this.sliders.addButtons([
+      { label: 'Clear pond', onClick: () => {
+        this.ripples = [];
+        this.rainAccum = 0;
+        this.lastDragSpawn = null;
+        this.rain = 0;
+        this.sliders.setValue('Rain', 0);
+      } },
+    ]);
+    this.sliders.addSection('Pond');
     this.sliders.addSlider({
       label: 'Rain', min: 0.0, max: 1.0, value: this.rain, step: 0.05,
       onChange: (v) => { this.rain = v; },
@@ -73,8 +93,8 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
       onChange: (v) => { this.strokeWidth = v; },
     });
     this.sliders.addSlider({
-      label: 'Boil Rate', min: 2.0, max: 12.0, value: this.boilRate, step: 0.5,
-      onChange: (v) => { this.boilRate = v; },
+      label: 'Ink wobble', min: 0.0, max: 1.0, value: this.inkWobble, step: 0.05,
+      onChange: (v) => { this.inkWobble = v; },
     });
   }
 
@@ -103,7 +123,7 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
         u_life: gl.getUniformLocation(program, 'u_life'),
         u_strokeWidth: gl.getUniformLocation(program, 'u_strokeWidth'),
         u_rain: gl.getUniformLocation(program, 'u_rain'),
-        u_boilRate: gl.getUniformLocation(program, 'u_boilRate'),
+        u_inkWobble: gl.getUniformLocation(program, 'u_inkWobble'),
       };
     }
 
@@ -123,24 +143,24 @@ export class RippleDropPlugin extends FragmentShaderPlugin {
     gl.uniform1f(this.locs.u_life, this.life);
     gl.uniform1f(this.locs.u_strokeWidth, this.strokeWidth);
     gl.uniform1f(this.locs.u_rain, this.rain);
-    gl.uniform1f(this.locs.u_boilRate, this.boilRate);
+    gl.uniform1f(this.locs.u_inkWobble, this.inkWobble);
   }
 
   onGesture(ctx: EngineContext, event: GestureEvent) {
     const x = event.pos.x;
     const y = 1.0 - event.pos.y; // shader UV origin is bottom-left
+    const kind = this.mark === 'spiral' ? KIND_SPIRAL : KIND_TAP;
 
     if (event.type === 'tap') {
-      const kind = Math.random() < SPIRAL_TAP_CHANCE ? KIND_SPIRAL : KIND_TAP;
       this.spawn(x, y, kind, ctx.time);
     } else if (event.type === 'drag-start') {
-      this.spawn(x, y, KIND_TAP, ctx.time);
+      this.spawn(x, y, kind, ctx.time);
       this.lastDragSpawn = [x, y];
     } else if (event.type === 'drag-move' && this.lastDragSpawn) {
       const dx = x - this.lastDragSpawn[0];
       const dy = y - this.lastDragSpawn[1];
       if (Math.hypot(dx, dy) > DRAG_SPAWN_SPACING) {
-        this.spawn(x, y, KIND_SMALL, ctx.time);
+        this.spawn(x, y, this.mark === 'spiral' ? KIND_SPIRAL : KIND_SMALL, ctx.time);
         this.lastDragSpawn = [x, y];
       }
     } else if (event.type === 'drag-end') {
