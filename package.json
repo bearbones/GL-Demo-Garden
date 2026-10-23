@@ -10,7 +10,7 @@
     "test:cells": "node scripts/check-cells.mjs",
     "test:stone": "node scripts/check-stone.mjs",
     "test:bubbles": "node scripts/check-bubbles.mjs",
-    "test:ripple": "npm run build && node scripts/check-ripple.mjs",
+    "test:ripple": "npm run build && node scripts/check-ripple.mjs && node scripts/check-ripple-optics.mjs && node scripts/check-ripple-marks.mjs && node scripts/check-ripple-blending.mjs",
     "test:searchlights": "npm run build && node scripts/check-searchlights.mjs",
     "test:browser": "npm run build && node scripts/check-browser.mjs"
   },

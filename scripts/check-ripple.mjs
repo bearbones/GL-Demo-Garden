@@ -42,6 +42,60 @@ try {
           gl[`delete${kind}`] = object => { objects.delete(object); return destroy(object); };
         }
         window.rippleResources = () => Object.fromEntries(Object.entries(live).map(([kind, objects]) => [kind, objects.size]));
+        // Follow the texture actually sampled by the final display pass. A large
+        // unrelated background allocation must not conceal low-resolution ink.
+        const dimensions = new Map(), bindings = new Map(), attachments = new Map();
+        let unit = gl.TEXTURE0, framebuffer = null;
+        const activeTexture = gl.activeTexture.bind(gl), bindTexture = gl.bindTexture.bind(gl);
+        const bindFramebuffer = gl.bindFramebuffer.bind(gl), texImage2D = gl.texImage2D.bind(gl);
+        gl.activeTexture = value => { unit = value; return activeTexture(value); };
+        gl.bindTexture = (target, texture) => { bindings.set(unit, texture); return bindTexture(target, texture); };
+        gl.bindFramebuffer = (target, object) => {
+          if (target !== gl.READ_FRAMEBUFFER) framebuffer = object;
+          return bindFramebuffer(target, object);
+        };
+        gl.texImage2D = (...args) => {
+          if (typeof args[3] === 'number') dimensions.set(bindings.get(unit), { width: args[3], height: args[4] });
+          return texImage2D(...args);
+        };
+        const framebufferTexture2D = gl.framebufferTexture2D.bind(gl);
+        gl.framebufferTexture2D = (...args) => {
+          if (framebuffer && args[1] === gl.COLOR_ATTACHMENT0) attachments.set(framebuffer, args[3]);
+          return framebufferTexture2D(...args);
+        };
+        const drawArrays = gl.drawArrays.bind(gl);
+        gl.drawArrays = (...args) => {
+          if (!framebuffer) window.rippleDisplaySource = dimensions.get(bindings.get(gl.TEXTURE0));
+          return drawArrays(...args);
+        };
+        const uniformNames = new Map(), getUniformLocation = gl.getUniformLocation.bind(gl);
+        const uniform1f = gl.uniform1f.bind(gl), uploads = new Map();
+        gl.getUniformLocation = (program, name) => {
+          const location = getUniformLocation(program, name);
+          if (location) uniformNames.set(location, name);
+          return location;
+        };
+        gl.uniform1f = (location, value) => {
+          if (uniformNames.get(location) === 'u_time') window.rippleLocalTime = value;
+          return uniform1f(location, value);
+        };
+        for (const method of ['bufferData', 'bufferSubData']) {
+          const original = gl[method].bind(gl);
+          gl[method] = (...args) => {
+            const data = args[method === 'bufferData' ? 1 : 2];
+            if (args[0] === gl.ARRAY_BUFFER && data instanceof Float32Array) {
+              uploads.set(gl.getParameter(gl.ARRAY_BUFFER_BINDING), Array.from(data));
+            }
+            return original(...args);
+          };
+        }
+        const drawInstances = gl.drawArraysInstanced.bind(gl);
+        gl.drawArraysInstanced = (...args) => {
+          const buffer = gl.getVertexAttrib(0, gl.VERTEX_ATTRIB_ARRAY_BUFFER_BINDING);
+          window.rippleDrawnInstances = { count: args[3], data: uploads.get(buffer)?.slice(0, args[3] * 4) };
+          window.rippleInkTarget = { ...dimensions.get(attachments.get(framebuffer)), viewport: Array.from(gl.getParameter(gl.VIEWPORT)) };
+          return drawInstances(...args);
+        };
       }
       return gl;
     };
@@ -59,7 +113,8 @@ try {
       let hash = 2166136261;
       for (const value of bytes) hash = Math.imul(hash ^ value, 16777619);
       if (name) frames.set(name, { bytes, width: canvas.width, height: canvas.height });
-      return { hash: hash >>> 0, width: canvas.width, height: canvas.height, error: gl.getError() };
+      return { hash: hash >>> 0, width: canvas.width, height: canvas.height,
+        displaySource: window.rippleDisplaySource, inkTarget: window.rippleInkTarget, error: gl.getError() };
     };
     // Compare the rendered mark with its exact empty plate. A brightness-weighted
     // outer annulus gives a subpixel radius, so fade/grain alone cannot satisfy
@@ -81,6 +136,19 @@ try {
       const outer = samples.filter(sample => sample.radius > edge - 5 && sample.radius < edge + 2);
       const mass = outer.reduce((sum, sample) => sum + sample.weight, 0);
       return { radius: outer.reduce((sum, sample) => sum + sample.radius * sample.weight, 0) / mass, mass, edge };
+    };
+    window.rippleInkStats = (name, empty) => {
+      const frame = frames.get(name), background = frames.get(empty);
+      let mass = 0, sx = 0, sy = 0, minX = frame.width, maxX = 0, minY = frame.height, maxY = 0;
+      for (let y = 0; y < frame.height; y++) for (let x = 0; x < frame.width; x++) {
+        const i = (y * frame.width + x) * 4;
+        const weight = Math.max(0, (frame.bytes[i] - background.bytes[i]) * 0.2126
+          + (frame.bytes[i + 1] - background.bytes[i + 1]) * 0.7152
+          + (frame.bytes[i + 2] - background.bytes[i + 2]) * 0.0722 - 3);
+        mass += weight; sx += (x + 0.5) * weight; sy += (y + 0.5) * weight;
+        if (weight > 10) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+      }
+      return { mass, x: sx / mass, y: sy / mass, width: maxX - minX + 1, height: maxY - minY + 1 };
     };
   });
   const step = (name = '', count = 1, dt = 1 / 60) => page.evaluate(({ name, count, dt }) => window.rippleStep(name, count, dt), { name, count, dt });
@@ -133,6 +201,9 @@ try {
   await select('Finish', 'photographed');
   await slider('Optical softness', 0);
   await slider('Gate weave', 0);
+  // The bounded gain keeps default grain visible at this 600px test height,
+  // while the standalone optics check covers its low-resolution cutoff.
+  await slider('Film grain', 0.45);
   const grainHashes = [];
   for (let i = 0; i < 26; i++) grainHashes.push((await step('', 1, 1 / 120)).hash);
   const changes = grainHashes.flatMap((hash, i) => i > 0 && hash !== grainHashes[i - 1] ? [i] : []);
@@ -147,6 +218,47 @@ try {
   await slider('Film grain', 0.45);
   await slider('Gate weave', 0.35);
 
+  // One short maximum-rate interval schedules one drop. Its submitted arrival
+  // point is only a reference: the assertions below require the rendered streak
+  // to approach that point and a visible ring to appear there afterward.
+  await page.evaluate(() => { window.rippleSavedRandom = Math.random; Math.random = () => 0.5; });
+  await slider('Rain', 1);
+  await step('', 1, 0.07);
+  await slider('Rain', 0);
+  const rainEntity = await page.evaluate(() => window.rippleDrawnInstances);
+  check(rainEntity?.count === 1 && rainEntity.data?.length === 4, 'The isolated rain interval submits exactly one falling entity');
+  await page.evaluate(() => { Math.random = window.rippleSavedRandom; });
+  const [rainX, rainY, arrival] = rainEntity.data;
+  const target = { x: rainX * empty.width, y: rainY * empty.height };
+  const advanceTo = async (name, time) => {
+    const remaining = time - await page.evaluate(() => window.rippleLocalTime);
+    const count = Math.max(0, Math.ceil(remaining / 0.09));
+    return step(name, count, count ? remaining / count : 0);
+  };
+  const inkStats = name => page.evaluate(name => window.rippleInkStats(name, 'empty'), name);
+  const saveCanvas = async name => {
+    const png = await page.locator('canvas').evaluate(canvas => canvas.toDataURL('image/png').split(',')[1]);
+    await writeFile(`${artifacts}/${name}.png`, Buffer.from(png, 'base64'));
+  };
+  await advanceTo('rain-early', arrival - 0.30);
+  const earlyRain = await inkStats('rain-early');
+  await saveCanvas('rain-early');
+  await advanceTo('rain-late', arrival - 0.10);
+  const lateRain = await inkStats('rain-late');
+  await saveCanvas('rain-late');
+  check(earlyRain.mass > 100 && lateRain.mass > 100 && earlyRain.y > lateRain.y + 10 && lateRain.y > target.y,
+    'A visible rain streak descends toward the pond before its arrival');
+  check(Math.hypot(lateRain.x - target.x, lateRain.y - target.y) < Math.hypot(earlyRain.x - target.x, earlyRain.y - target.y),
+    'The falling stroke moves closer to its eventual impact point');
+  await advanceTo('rain-impact', arrival + 0.35);
+  const impact = await inkStats('rain-impact');
+  await saveCanvas('rain-impact');
+  check(impact.mass > 100 && Math.hypot(impact.x - target.x, impact.y - target.y) < 2.5 && impact.width > lateRain.width + 4,
+    'The same rain entity becomes a visibly widening ring at its submitted impact point');
+  receipts.rain = { entity: rainEntity.data, target, early: earlyRain, late: lateRain, impact };
+  await page.getByRole('button', { name: 'Clear pond', exact: true }).click();
+  check((await step()).hash === empty.hash, 'Clearing after a rain impact restores the exact empty plate');
+
   const rainControl = page.getByLabel('Rain', { exact: true });
   check(await rainControl.evaluate(input => input.labels[0]?.control === input), 'The Rain label is associated with its native range');
   await rainControl.focus();
@@ -154,7 +266,7 @@ try {
   check(await rainControl.inputValue() === '1', 'Native End key reaches maximum rain');
   await page.keyboard.press('ArrowLeft');
   check(await rainControl.inputValue() === '0.95', 'Native arrow key changes rain by one step');
-  check((await step('', 8, 0.1)).hash !== empty.hash, 'Changing native rain control creates visible rainfall');
+  check((await step('', 15, 0.1)).hash !== empty.hash, 'Changing native rain control creates visible rainfall after its above-frame flight');
   await page.getByRole('button', { name: 'Clear pond', exact: true }).click();
   await select('Playback', 'paused');
   const cleared = await step();
@@ -163,6 +275,7 @@ try {
   check(shower.hash !== cleared.hash, 'Shower adds visible marks while paused');
   check((await step('', 6, 0.1)).hash === shower.hash, 'Shower preserves paused playback');
   await page.getByRole('button', { name: 'Clear pond', exact: true }).click();
+  check((await step()).hash === empty.hash, 'Clear removes the paused airborne shower as well as landed ripples');
   await select('Mark', 'spiral');
   await select('Playback', 'live');
   await page.mouse.click(600, 300);
@@ -196,7 +309,12 @@ try {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: false });
   const retina = await step();
   check(retina.width === 780 && retina.height === 1688 && retina.error === 0,
-    'Portrait DPR2 renders a 780×1688 output through the bounded photographic plate');
+    'Portrait DPR2 renders a 780×1688 output without GL errors');
+  const nativeInk = frame => frame.inkTarget?.width >= frame.width && frame.inkTarget?.height >= frame.height
+    && frame.inkTarget.viewport[2] >= frame.width && frame.inkTarget.viewport[3] >= frame.height
+    && frame.displaySource.width >= frame.width && frame.displaySource.height >= frame.height;
+  check(nativeInk(retina),
+    'Portrait DPR2 ink reaches the photographic finish at native pixel resolution');
   check((await step()).hash === retina.hash && JSON.stringify(await resources()) === JSON.stringify(initialResources),
     'DPR2 resize preserves paused pixels and balanced GL resources');
   // Browser screenshots retain the context's original CSS scale after a CDP
@@ -205,6 +323,11 @@ try {
   await writeFile(`${artifacts}/ripple-portrait-dpr2.png`, Buffer.from(retinaPng, 'base64'));
   await cdp.send('Emulation.clearDeviceMetricsOverride');
   await cdp.detach();
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const fullHD = await step();
+  check(fullHD.error === 0 && nativeInk(fullHD),
+    '1080p ink reaches the photographic finish without thin-line upsampling');
+  receipts.renderTargets = { retina, fullHD };
   await page.setViewportSize({ width: 800, height: 600 });
   check((await step()).error === 0, 'Resizing back to desktop preserves a valid render target');
   await page.getByRole('button', { name: 'Show controls', exact: true }).click();
