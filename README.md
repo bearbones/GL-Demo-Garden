@@ -9,7 +9,7 @@ A WebGL2 interactive shader effects gallery with an 80s anime aesthetic. Each de
 | **Wobbly Cells** | Animated Voronoi mosaic | Gather/spread lens, four palettes, density, seams, light, drift, freeze and reshuffle |
 | **Turing Patterns** | Gray-Scott reaction-diffusion | Plant/erase brushes, chemistry recipes, palettes, seed layouts, pause, step, reseed and clear |
 | **Bubble Physics** | Deformable underwater bubbles | Stir the water; tune flow, rise, size and release rate |
-| **Ripple Drop** | Smoothly expanding inked pond ripples | Choose rings or spirals; tap or drag; tune rain, perspective, lifetime, stroke and subtle ink wobble; clear pond |
+| **Ripple Drop** | Hand-inked marks over a photographed pond painting | Rings or spirals; three palettes; pressure and line boil; optical softness, grain and gate weave; pause a cel, shower or clear the pond |
 | **Sea Melt** | Flowing foam contours | Tune warp, crest width/count and drift |
 | **Stone Break** | One shared fracture network for cracks and pieces | Strike a framed stone slab, then reassemble it or make a new stone |
 | **Searchlights** | Beams, drifting haze and occluding forms | Aim the lights; explore beam width, sweep, haze and blocker arrangements |
@@ -42,6 +42,7 @@ npm run test:cells          # 24,000-case nearest-cell oracle and original-bug n
 npm run test:stone          # Shared seam, coverage and triangulation checks across generated slabs
 npm run test:bubbles        # Frame-schedule identity, rise, contact and stirring checks
 npx playwright install chromium
+npm run test:ripple         # Actual ring motion, film cadence, pause, controls and GL resource lifetime
 npm run test:searchlights   # Production shader checks for shadows, aiming, freeze and light controls
 npm run test:browser        # Production build, all-demo WebGL smoke and desktop/mobile control checks
 ```
@@ -81,7 +82,7 @@ src/
 │   ├── wobbly-cells/        # index.ts + fragment.glsl
 │   ├── turing-patterns/     # index.ts + compute.glsl + display.glsl
 │   ├── bubble-physics/      # Fixed-step dynamics, instanced surfaces and shared water shading
-│   ├── ripple-drop/         # index.ts + display.glsl
+│   ├── ripple-drop/         # Cached painting, analytic ink and photographic finish
 │   ├── stone-break/         # Shared fracture geometry, meshes and crack animation
 │   ├── searchlights/        # Analytic light transport and occlusion
 │   ├── paper-marbling/      # index.ts + trace.glsl + display.glsl + recipes.ts

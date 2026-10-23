@@ -103,6 +103,10 @@ try {
   check(await page.getByLabel('Feed rate', { exact: true }).inputValue() === '0.0367', 'Recipe synchronizes precise chemistry controls');
 
   await go('ripple-drop');
+  // Animated film grain must not satisfy a motion assertion on its own.
+  await page.getByLabel('Finish', { exact: true }).selectOption('drawing');
+  await page.getByLabel('Hand drawn', { exact: true }).fill('0');
+  await page.getByLabel('Line boil', { exact: true }).fill('0');
   await page.getByRole('button', { name: 'Clear pond', exact: true }).click();
   const emptyPond = await step();
   await page.mouse.click(600, 300);

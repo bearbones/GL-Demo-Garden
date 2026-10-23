@@ -245,30 +245,25 @@ The display shader maps the B concentration to a colour gradient. Clicking seeds
 
 The plant/erase brush follows a screen-space capsule so fast drags join continuously and brushes stay circular on portrait and landscape canvases. A tap is consumed once. While paused, drawing uses one compute pass with `u_dt = 0`, leaving chemistry outside the brush unchanged; Step advances one selected batch and remains paused. Seed layout changes, Clear and Reseed initialize both textures. Growth still uses iterations per rendered frame (12 by default).
 
-### Ripple Drop (Hand-Inked Rain)
+### Ripple Drop (Photographed Cels)
 
-Modeled on the pond scenes in *Windaria* (1986). The key realization is that the animated ripple look is **not a wave simulation**: each ripple in the reference cels is a discrete hand-inked ellipse (or spiral) drawn *on* a flat painted pond, expanding and fading on its own — no interference, no reflections. An earlier version of this demo used a 2D wave-equation heightfield, which produced physically-correct interference soup instead of clean rings; it was replaced entirely.
+The ripple drawing and the photographic finish are separate. This is an interpretation of hand-inked animation photographed over a held background painting, not a calibrated reconstruction of *Windaria* or a particular film stock.
 
-The current implementation keeps a small CPU list of ripple entities — `(x, y, birthTime, kind + seed)` packed into a `vec4` — uploaded as a uniform array (`MAX_RIPPLES = 48`) and evaluated analytically in a single fragment pass. No ping-pong FBO, no resize state to preserve.
+`index.ts` implements `Plugin` directly and owns three programs, two `RGBA8` textures/framebuffers and a fullscreen VAO:
 
-Three ripple kinds:
+1. **Held painting** (`painting.glsl`, `background.glsl`): three opaque water palettes, directional brush washes, quiet canopy reflections and spatially fixed pigment texture. This plate is cached and repainted only on palette changes or resize.
+2. **Cel drawing** (`display.glsl`): up to 48 CPU ripple entities, packed as `(x, y, birthTime, kind + seed)`, are drawn over the cached painting. Rain makes two small rings; taps make three staggered rings; the explicit spiral tool makes one three-turn stroke. These are independent graphic marks, without wave interference.
+3. **Photography** (`photograph.glsl`): samples the finished drawing with restrained optical diffusion, highlight scatter, shadow lift, exposure breathing, subpixel common-image weave, and mostly luminance grain with small correlated clumps. Grain refreshes at 24 Hz. No film frames are accumulated or fed back.
 
-- **Rain drop** (`kind 0`): two small concentric rings. Spawned ambiently at a framerate-independent rate set by the Rain slider, and dotted along drag paths.
-- **Tap** (`kind 1`): three larger staggered rings plus a brief impact dot at birth.
-- **Spiral** (`kind 2`): one continuous three-turn spiral stroke, selected explicitly with the Mark control. Rings are the default.
+The painting and drawing targets preserve aspect ratio and are bounded to 1280×720; photography samples at the physical display resolution. Ordinary unsigned-byte targets need no float framebuffer extension. Texture storage is replaced on resize, and all GL objects are deleted on navigation.
 
-Every ring is drawn with the ingredients that make it read as inked rather than computed:
+Line character comes from unequal tapered brush passes, variable pressure and ink coverage, small dry edges, and broad asymmetric contours. Radial distance is corrected by the ellipse's screen-space normal so foreshortening does not collapse the upper and lower strokes into hairlines. Circle-based noise and integer angular harmonics remain continuous across the angle seam; the spiral uses unwrapped arc length. Conservative footprint and stroke-band bounds reject unaffected pixels before expensive ink evaluation.
 
-- **Foreshortening**: positions are evaluated in a vertically squashed space (Perspective slider), with ripples higher in the frame rendered smaller and flatter for depth.
-- **Ease-out expansion**: radius follows `1 − (1−u)²`, fast at birth and decelerating, with rings in a set staggered in time.
-- **Hand wobble**: the radius and stroke width are modulated by simplex noise sampled *on the ring's unit circle* (`snoise(dir * k + seed)`), which varies around the ring without a seam at ±π.
-- **Ink gaps**: an angular sine-plus-noise mask leaves 2–3 deliberate breaks per ring, so ellipses are incomplete the way a fast brush pass is.
-- **Continuous motion**: expansion, current and rain use unquantized time. Ink noise drifts slowly and gaps remain anchored to the ring; Ink wobble controls its low-amplitude irregularity independently from motion.
-- **Aging**: rings thin, gently fragment and fade while retaining their elliptical shape. A slight seed-directed current moves their centers.
+Expansion, drift, fading and rain advance continuously. Only a very small edge retrace changes at 12 Hz. **Hand drawn** controls contour, pressure and ink character; **Line boil** controls this redraw variation independently. The local playback clock freezes all art and photography together. Paused taps and **Shower** still place visible marks. **Clear pond** removes marks and sets Rain to zero. **Clean drawing** bypasses photographic effects without discarding their slider settings.
 
-The shader rejects pixels outside each ripple's largest possible footprint, then rejects pixels outside a conservative stroke band before evaluating ring noise. Clear pond empties the ripple list and stops ambient rain for a clean drawing surface.
+`scripts/check-ripple.mjs` measures the actual outer stroke radius on successive 60 Hz samples with film and boil disabled, so grain alone cannot pass the motion check. It also checks isolated grain cadence, paused pixel identity, palette/cache updates, native controls, resize and balanced resource lifetimes. Controlled-time SwiftShader captures are visual and behavioral evidence, not hardware frame-rate measurements.
 
-The pond itself is flat gouache: a tonal gradient with soft `fbm` blotches, a sky-reflection patch, and a gentle edge vignette. When the Rain slider is up, thin falling streak dashes are composited at low alpha.
+Reference choices: the [Ghibli Museum's 2023–24 annual report, printed pp. 64–65](https://www.ghibli-museum.jp/docs/nennpou2023-2024.pdf#page=68) describes tracing that preserved thin, faint and broken drawing marks. [Disney's cel-production explanation](https://d23.com/a-to-z/cel/) describes separate painted cels and backgrounds, including two-frame holds. [Kodak's filmmaking reference guide](https://www.kodak.com/content/products-brochures/Film/kodak-essential-reference-guide-for-filmmakers.pdf) informs the restrained grain and highlight-scatter treatment. The demo intentionally keeps interactive expansion continuous while borrowing the drawing and photographic qualities of that process.
 
 ### Stone Break
 
