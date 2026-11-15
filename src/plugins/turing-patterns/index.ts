@@ -3,6 +3,8 @@ import { PingPongFBO } from '../../plugin/PingPongFBO';
 import { EngineContext, GestureEvent } from '../../engine/types';
 import { createProgram } from '../../engine/gl-utils';
 import { ParamSlider } from '../../engine/ParamSlider';
+import { ArrowState } from '../../engine/ArrowInput';
+import { ArrowCursor } from '../../engine/ArrowCursor';
 import quadVert from '../../shaders/fullscreen-quad.vert';
 import computeSrc from './compute.glsl';
 import displaySrc from './display.glsl';
@@ -25,6 +27,7 @@ const PALETTES: { id: string; label: string; paper: Color; ink: Color }[] = [
 
 export class TuringPatternsPlugin implements Plugin {
   readonly name = 'Turing Patterns';
+  private keyboard = new ArrowCursor();
 
   private pingPong!: PingPongFBO;
   private computeProgram!: WebGLProgram;
@@ -51,6 +54,7 @@ export class TuringPatternsPlugin implements Plugin {
 
   init(ctx: EngineContext) {
     const { gl } = ctx;
+    this.keyboard.attach(ctx.canvas, 'seed');
     this.computeProgram = createProgram(gl, quadVert, computeSrc);
     this.displayProgram = createProgram(gl, quadVert, displaySrc);
     this.seedProgram = createProgram(gl, quadVert, seedSrc);
@@ -205,7 +209,17 @@ export class TuringPatternsPlugin implements Plugin {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
+  onKeyboard(ctx: EngineContext, keys: ArrowState) {
+    if (!keys.active) { this.keyboard.vx = this.keyboard.vy = 0; return; }
+    this.brushFrom = [this.keyboard.x, this.keyboard.y];
+    this.keyboard.move(ctx, keys, 0.3, 18);
+    this.brushTo = [this.keyboard.x, this.keyboard.y];
+    this.brushPending = true;
+    this.dragging = false;
+  }
+
   onGesture(_ctx: EngineContext, event: GestureEvent) {
+    this.keyboard.place(event.pos.x, event.pos.y);
     const pos: [number, number] = [event.pos.x, event.pos.y];
     if (event.type === 'tap' || event.type === 'drag-start') this.brushFrom = pos;
     this.brushTo = pos;
@@ -214,6 +228,7 @@ export class TuringPatternsPlugin implements Plugin {
   }
 
   destroy(ctx: EngineContext) {
+    this.keyboard.destroy();
     const { gl } = ctx;
     gl.deleteProgram(this.computeProgram);
     gl.deleteProgram(this.displayProgram);

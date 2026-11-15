@@ -1,6 +1,8 @@
 import { FragmentShaderPlugin } from '../../plugin/FragmentShaderPlugin';
 import { EngineContext, GestureEvent } from '../../engine/types';
 import { ParamSlider } from '../../engine/ParamSlider';
+import { ArrowState } from '../../engine/ArrowInput';
+import { ArrowCursor } from '../../engine/ArrowCursor';
 import fragmentSrc from './fragment.glsl';
 
 export class WobbyCellsPlugin extends FragmentShaderPlugin {
@@ -22,6 +24,7 @@ export class WobbyCellsPlugin extends FragmentShaderPlugin {
   private lensActive = false;
   private lens = 0;
   private pointer: [number, number] = [0.5, 0.5];
+  private keyboard = new ArrowCursor();
 
   protected fragmentSource() {
     return fragmentSrc;
@@ -76,7 +79,10 @@ export class WobbyCellsPlugin extends FragmentShaderPlugin {
       onChange: value => { this.strength = value; } });
     this.controls.addButtons([
       { label: 'Reshuffle', onClick: () => { this.seed += 13.71; } },
-      { label: 'Clear lens', onClick: () => { this.lensActive = false; } },
+      { label: 'Clear lens', onClick: () => {
+        this.lensActive = false;
+        this.keyboard.place(this.keyboard.x, this.keyboard.y);
+      } },
     ]);
   }
 
@@ -111,8 +117,17 @@ export class WobbyCellsPlugin extends FragmentShaderPlugin {
     gl.uniform1f(uniform('u_seed'), this.seed);
   }
 
+  onKeyboard(ctx: EngineContext, keys: ArrowState) {
+    const distance = this.keyboard.move(ctx, keys, 0.5, 7);
+    if (keys.active || distance > 0) {
+      this.mousePos = [this.keyboard.x, 1 - this.keyboard.y];
+      this.lensActive = true;
+    }
+  }
+
   onGesture(ctx: EngineContext, event: GestureEvent) {
     super.onGesture(ctx, event);
+    this.keyboard.place(event.pos.x, event.pos.y);
     this.lensActive = true;
   }
 

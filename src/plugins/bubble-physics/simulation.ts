@@ -29,6 +29,7 @@ export class BubbleSimulation {
   readonly bubbles: Bubble[] = [];
   readonly settings: BubbleSettings = { flow: 0.75, rise: 1, size: 1, release: 5.5 };
   readonly pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5, vx: 0, vy: 0, active: false };
+  readonly current = { x: 0, y: 0, targetX: 0, targetY: 0 };
   time = 0;
   accumulator = 0;
   aspect: number;
@@ -54,6 +55,7 @@ export class BubbleSimulation {
     this.releaseAccum = 0;
     this.pointer.active = false;
     this.pointer.vx = this.pointer.vy = 0;
+    this.current.x = this.current.y = this.current.targetX = this.current.targetY = 0;
     this.bubbles.length = 0;
     // Begin with a developed stream instead of an empty loading interval.
     for (let i = 0; i < 22; i++) {
@@ -82,6 +84,12 @@ export class BubbleSimulation {
     const p = this.pointer;
     if (active && !p.active) { p.x = x; p.y = y; p.vx = p.vy = 0; }
     p.targetX = x; p.targetY = y; p.active = active;
+  }
+
+  setCurrent(x: number, y: number) {
+    const length = Math.max(1, Math.hypot(x, y));
+    this.current.targetX = x / length * 0.6;
+    this.current.targetY = y / length * 0.6;
   }
 
   emit(x: number, y: number, radius?: number): Bubble | null {
@@ -113,8 +121,8 @@ export class BubbleSimulation {
     const t = this.time;
     const a = x * 3.1 + y * 2.4 - t * 0.32;
     const b = x * 5.2 - y * 3.3 + t * 0.23;
-    return [this.settings.flow * (0.014 * 2.4 * Math.cos(a) + 0.007 * 3.3 * Math.cos(b)),
-      this.settings.flow * (-0.014 * 3.1 * Math.cos(a) + 0.007 * 5.2 * Math.cos(b))];
+    return [this.current.x + this.settings.flow * (0.014 * 2.4 * Math.cos(a) + 0.007 * 3.3 * Math.cos(b)),
+      this.current.y + this.settings.flow * (-0.014 * 3.1 * Math.cos(a) + 0.007 * 5.2 * Math.cos(b))];
   }
 
   advance(dt: number) {
@@ -131,6 +139,11 @@ export class BubbleSimulation {
   private step() {
     const h = BUBBLE_STEP;
     this.time += h;
+    // Relax inside the fixed-step loop, so the same held keys produce the
+    // same current and bubble trajectories at every display refresh rate.
+    const followCurrent = 1 - Math.exp(-h * 3);
+    this.current.x += (this.current.targetX - this.current.x) * followCurrent;
+    this.current.y += (this.current.targetY - this.current.y) * followCurrent;
     const p = this.pointer;
     if (p.active) {
       const ox = p.x, oy = p.y, follow = 1 - Math.exp(-h / 0.045);

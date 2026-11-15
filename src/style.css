@@ -22,6 +22,25 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   outline-offset: 4px;
 }
 #stage { position: fixed; inset: 0; }
+#stage canvas:focus-visible { outline: 2px solid var(--aquamarine); outline-offset: -3px; }
+#keyboard-hint { margin: 8px 0 0; color: var(--aquamarine); font-size: 12px; line-height: 1.6; }
+.arrow-cursor { position: absolute; pointer-events: none; z-index: 1; }
+.arrow-cursor-seed {
+  width: 10px; height: 10px; margin: -5px; border-radius: 50%;
+  background: #fff5bd; border: 1px solid #685b37;
+  box-shadow: 0 0 0 4px #fff5bd35, 0 0 15px #fff5bd99;
+}
+.arrow-cursor-skater {
+  width: 15px; height: 5px; margin: -2.5px -7.5px; border-radius: 50%;
+  background: #292f36; border: 1px solid #e0d8bd;
+  box-shadow: 0 3px 2px #18212b66;
+  transform: rotate(var(--heading, 0rad));
+}
+.arrow-cursor-skater::before, .arrow-cursor-skater::after {
+  content: ''; position: absolute; left: 4px; top: -5px; width: 5px; height: 13px;
+  border-left: 1px solid #e0d8bd; border-right: 1px solid #e0d8bd; transform: skewX(28deg);
+}
+.arrow-cursor-skater::after { transform: skewX(-28deg); }
 
 /* The metalwork belongs to the fixed frame, so it never scrolls over a tool. */
 #garden-ui {

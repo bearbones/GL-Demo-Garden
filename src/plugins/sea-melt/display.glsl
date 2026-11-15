@@ -11,8 +11,10 @@ uniform float u_time;
 uniform vec2 u_resolution;
 uniform float u_warpStrength;
 uniform float u_crestWidth;
-uniform float u_driftSpeed;
+uniform float u_drift;
 uniform float u_crestCount;
+uniform vec4 u_tide; // integrated displacement, then velocity
+uniform vec2 u_turn;
 
 // ── Color Palette ──────────────────────────────────────────────────
 const vec3 WATER_DEEP  = vec3(0.03, 0.14, 0.28);
@@ -27,8 +29,16 @@ void main() {
   float time = u_time;
 
   // ── Gentle directional drift ─────────────────────────────────────
-  vec2 drift = vec2(0.08, 0.22) * u_driftSpeed * time;
-  vec2 baseUV = uv + drift;
+  vec2 drift = vec2(0.08, 0.22) * u_drift;
+  vec2 baseUV = uv + drift - u_tide.xy;
+  // A broad transverse shear bends the contours in the moving tide.
+  // Acceleration/reversal briefly folds them more tightly before relaxing.
+  vec2 flow = u_tide.zw;
+  // Keep the phase continuous as velocity crosses zero during a reversal.
+  // Normalizing here would flip the turn wave's direction at zero speed.
+  vec2 direction = flow / 0.3;
+  baseUV += vec2(-flow.y, flow.x) * sin(dot(uv, direction) * 4.5 + time * 0.45) * 0.65;
+  baseUV += vec2(-u_turn.y, u_turn.x) * sin(dot(uv, direction) * 7.0 - time * 0.7) * 0.9;
 
   // ── Smooth domain warp (gentle meander, not chaotic) ─────────────
   // Single level of low-frequency warp for smooth, flowing curves

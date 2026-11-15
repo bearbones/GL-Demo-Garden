@@ -17,6 +17,25 @@ function run(schedule, seconds = 12) {
   return sim;
 }
 const reference = run([1 / 60]);
+// Keyboard currents must overcome buoyancy, then relinquish it on release.
+function currentRun(dt) {
+  const sim = new BubbleSimulation(1.6, 77);
+  sim.bubbles.length = 0;
+  sim.settings.release = sim.settings.flow = 0;
+  const bubble = sim.emit(0.8, 0.7, 0.03);
+  sim.setCurrent(0, -1);
+  for (let i = 0; i < Math.round(1 / dt); i++) sim.advance(dt);
+  const submerged = bubble.y;
+  sim.setCurrent(0, 0);
+  for (let i = 0; i < Math.round(2 / dt); i++) sim.advance(dt);
+  assert.ok(submerged < 0.58, 'held Down visibly submerges a rising bubble');
+  assert.ok(bubble.y > submerged + 0.1, 'releasing Down restores buoyant rise');
+  return { bubble: { ...bubble }, submerged, current: { ...sim.current } };
+}
+const currentReference = currentRun(1 / 60);
+for (const dt of [1 / 30, 1 / 144]) {
+  assert.deepEqual(currentRun(dt), currentReference, 'held/released currents are identical across frame schedules');
+}
 let maxScheduleDifference = 0;
 for (const schedule of [[1 / 30], [1 / 144], [0.019, 0.007, 0.038, 0.011, 0.025]]) {
   const sim = run(schedule);

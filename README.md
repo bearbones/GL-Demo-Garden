@@ -19,6 +19,23 @@ Open the **Demo Garden** drawer to switch demos and adjust their tools. It start
 
 The drawer has a silver leafy-vine frame, engraved dividers and faceted gemstone controls. Its vector ornaments scale cleanly, while sliders and menus retain native keyboard and touch behavior.
 
+### Play with the arrow keys
+
+On a desktop or laptop, hold the arrows to play directly with the active demo. Diagonal directions work too. Click the canvas or Tab to it after adjusting a control; focused sliders and menus keep their usual arrow-key behavior. The drawer shows a hint for each demo, and the keys also work with the drawer hidden.
+
+| Demo | Arrow keys |
+|------|------------|
+| **Wobbly Cells** | Steer the selected gather/spread lens; release to let it settle. |
+| **Turing Patterns** | Draw growing seed trails, or cut paths with the Erase brush. Painting works while paused. |
+| **Bubble Physics** | Build a water current in any direction. Down submerges bubbles; release restores their natural rise. Playback pause freezes the simulation. |
+| **Ripple Drop** | Steer a tiny water-skater that leaves ink ripples and coasts on release. In a paused cel, keys draw a held wake. |
+| **Sea Melt** | Pull the tide; reversing curls and compresses the foam. Release eases back to background drift. |
+| **Stone Break** | Up reveals cracks and opens the slab; Down closes and heals it; Left/Right rock the open pieces. Release holds the opening. |
+| **Searchlights** | Steer the shared aim point, including while frozen. Release holds the aim; Resume sweep restores automatic motion. |
+| **Paper Marbling** | Pull a straight comb from the incoming edge. Release lifts it; another press starts a new pass. Cross directions for woven patterns. |
+
+Switching demos, leaving the tab, or focusing a form control releases held keys. Returning to the demo requires a fresh key press.
+
 You can also set the URL hash directly:
 
 ```
@@ -41,6 +58,7 @@ Verification:
 npm run test:cells          # 24,000-case nearest-cell oracle and original-bug negative control
 npm run test:stone          # Shared seam, coverage and triangulation checks across generated slabs
 npm run test:bubbles        # Frame-schedule identity, rise, contact and stirring checks
+npm run test:keyboard       # All eight keyboard interactions, focus/release rules and frame-rate checks
 npx playwright install chromium
 npm run test:ripple         # Rain landing, native ink, motion, optical profiles, mark bounds, blending and resource lifetime
 npm run test:searchlights   # Production shader checks for shadows, aiming, freeze and light controls
@@ -48,6 +66,7 @@ npm run test:browser        # Production build, all-demo WebGL smoke and desktop
 ```
 
 Browser checks use Chromium's software WebGL renderer and write screenshots to `/tmp/gl-demo-garden-checks` (override with `ARTIFACT_DIR`). These verify rendering and interaction; they do not establish hardware GPU or real-phone frame rates.
+Keyboard checks write eight screenshots and a JSON receipt to `/tmp/gl-demo-garden-keyboard` (also overridable with `ARTIFACT_DIR`).
 
 **Requirements**: A browser with WebGL2 and `EXT_color_buffer_float` support (all modern browsers qualify). The compute-heavy demos (e.g. Turing Patterns) run simulation grids at half resolution to stay GPU-friendly.
 
@@ -71,6 +90,8 @@ src/
 ├── engine/
 │   ├── Engine.ts            # WebGL2 context, RAF loop, plugin lifecycle
 │   ├── InputManager.ts      # Unified mouse/touch gesture handling
+│   ├── ArrowInput.ts        # Held keys, focus protection, quick taps and release handling
+│   ├── ArrowCursor.ts       # Damped movement and seed/skater markers
 │   ├── ParamSlider.ts       # Labelled sliders, selects, actions and sections in the shared drawer
 │   ├── gl-utils.ts          # Shader compilation and program linking
 │   └── types.ts             # EngineContext, GestureEvent interfaces

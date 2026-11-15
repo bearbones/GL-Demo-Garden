@@ -31,6 +31,7 @@ export class InputManager {
   }
 
   private onPointerDown = (e: PointerEvent) => {
+    this.canvas.focus({ preventScroll: true });
     this.canvas.setPointerCapture(e.pointerId);
     this.downPos = { x: e.clientX, y: e.clientY };
     this.downTime = performance.now();

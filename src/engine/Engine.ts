@@ -1,5 +1,6 @@
 import { EngineContext, GestureEvent } from './types';
 import { InputManager } from './InputManager';
+import { ArrowInput } from './ArrowInput';
 import { Plugin } from '../plugin/Plugin';
 
 const MAX_DT = 0.1; // Cap dt at 100ms to prevent animation jumps after tab switches
@@ -8,6 +9,7 @@ export class Engine {
   private canvas: HTMLCanvasElement;
   private gl: WebGL2RenderingContext;
   private input: InputManager;
+  private arrows = new ArrowInput();
   private activePlugin: Plugin | null = null;
   private startTime = 0;
   private lastFrameTime = 0;
@@ -15,6 +17,9 @@ export class Engine {
 
   constructor(container: HTMLElement = document.body) {
     this.canvas = document.createElement('canvas');
+    this.canvas.tabIndex = 0;
+    this.canvas.setAttribute('aria-label', 'Interactive demo. Use the arrow keys to play.');
+    this.canvas.setAttribute('aria-describedby', 'keyboard-hint');
     this.canvas.style.cssText = 'display:block;width:100%;height:100%;';
     container.appendChild(this.canvas);
 
@@ -33,6 +38,7 @@ export class Engine {
   }
 
   loadPlugin(plugin: Plugin) {
+    this.arrows.reset();
     if (this.activePlugin) {
       this.activePlugin.destroy(this.buildContext(0));
     }
@@ -82,7 +88,9 @@ export class Engine {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
-      this.activePlugin.render(this.buildContext(dt));
+      const ctx = this.buildContext(dt);
+      this.activePlugin.onKeyboard?.(ctx, this.arrows.sample());
+      this.activePlugin.render(ctx);
 
       // Flush the command queue so the GPU starts processing before the
       // compositor reads the buffer at vsync.
@@ -112,5 +120,6 @@ export class Engine {
       this.activePlugin.destroy(this.buildContext(0));
     }
     this.input.destroy();
+    this.arrows.destroy();
   }
 }

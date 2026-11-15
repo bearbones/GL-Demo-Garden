@@ -2,6 +2,7 @@ import { Plugin } from '../../plugin/Plugin';
 import { EngineContext, GestureEvent } from '../../engine/types';
 import { createProgram } from '../../engine/gl-utils';
 import { ParamSlider } from '../../engine/ParamSlider';
+import { ArrowState } from '../../engine/ArrowInput';
 import quadVert from '../../shaders/fullscreen-quad.vert';
 import background from './display.glsl';
 import meshVert from './mesh.vert';
@@ -35,6 +36,11 @@ export class StoneBreakPlugin implements Plugin {
   private repairAt = 0;
   private repairFrom = 0;
   private progress = 0;
+  private sculpting = false;
+  private sculptLevel = 0;
+  private sculptDistances: number[][] = [];
+  private sculptReach = 1;
+  private rock = 0;
   private arrival: number[][] = [];
   private strikePoint: Point = { x: 0, y: 0 };
   private strikeAt = -100;
@@ -85,6 +91,8 @@ export class StoneBreakPlugin implements Plugin {
     this.slab = makeSlab(width, height, this.count, this.roughness, this.seed);
     this.arrival = this.slab.seams.map(edge => edge.points.map(() => Infinity));
     this.phase = 'intact'; this.damage = 0; this.progress = 0; this.breakAt = Infinity; this.strikeAt = -100;
+    this.sculpting = false; this.sculptLevel = 0; this.rock = 0;
+    this.strikePoint = { x: 0, y: 0 };
     const random = randomSource(this.seed + 37);
     this.poses = this.slab.fragments.map(piece => {
       // A gentle dilation opens neighboring pieces apart consistently;
@@ -94,13 +102,43 @@ export class StoneBreakPlugin implements Plugin {
   }
 
   private reassemble() {
+    this.sculpting = false;
     if (this.phase === 'repairing') return;
     if (this.progress < 0.001) { this.newStone(false); return; }
     this.repairFrom = this.progress; this.repairAt = this.now; this.phase = 'repairing';
   }
 
+  onKeyboard(ctx: EngineContext, keys: ArrowState) {
+    this.rock += (keys.x * 0.24 - this.rock) * (1 - Math.exp(-ctx.dt * 8));
+    if (Math.abs(this.rock) < 1e-6) this.rock = 0;
+    if (keys.y === 0) return;
+    if (keys.y > 0 && !this.sculpting && this.progress === 0 && this.damage === 0) return;
+    if (!this.sculpting) {
+      this.sculpting = true;
+      // The first third reveals cracks; the rest separates their pieces.
+      const opening = 0.5 - Math.sin(Math.asin(1 - 2 * clamp(this.progress)) / 3);
+      this.sculptLevel = this.progress > 0 ? 0.3 + 0.7 * opening : this.damage * 0.3;
+      this.sculptDistances = strikeDistances(this.slab, this.strikePoint);
+      const finite = this.sculptDistances.flat().filter(Number.isFinite);
+      this.sculptReach = Math.max(0.01, ...finite);
+      this.phase = 'intact';
+    }
+    this.sculptLevel = clamp(this.sculptLevel - keys.y * ctx.dt * 0.42);
+    this.damage = clamp(this.sculptLevel / 0.3);
+    this.progress = smooth((this.sculptLevel - 0.3) / 0.7);
+    this.sculptDistances.forEach((edge, i) => edge.forEach((d, j) => {
+      this.arrival[i][j] = this.damage > 0 && d <= this.damage * this.sculptReach
+        ? Math.min(this.arrival[i][j], this.now) : Infinity;
+    }));
+    if (this.sculptLevel === 0) this.newStone(false);
+  }
+
   onGesture(_ctx: EngineContext, event: GestureEvent) {
     if (event.type !== 'tap') return;
+    if (this.sculpting) {
+      this.sculpting = false;
+      this.phase = this.progress > 0 ? 'broken' : 'intact';
+    }
     if (this.phase === 'broken') { this.reassemble(); return; }
     if (this.phase !== 'intact') return;
     const x = (event.pos.x * 2 - 1) * this.aspect, y = 1 - event.pos.y * 2 - 0.04;
@@ -128,8 +166,9 @@ export class StoneBreakPlugin implements Plugin {
     const x = fragment.center.x + dx * c - dy * s + pose.x * this.progress;
     const y = fragment.center.y + dx * s + dy * c + pose.y * this.progress + lift;
     const shake = Math.exp(-Math.max(0, this.now - this.strikeAt) * 14) * 0.006;
-    return { x: x * Math.cos(ROTATION) - y * Math.sin(ROTATION) + Math.sin(this.now * 83) * shake,
-      y: x * Math.sin(ROTATION) + y * Math.cos(ROTATION) + 0.04 + extra + Math.sin(this.now * 71) * shake };
+    const tilt = ROTATION + this.rock * this.progress;
+    return { x: x * Math.cos(tilt) - y * Math.sin(tilt) + Math.sin(this.now * 83) * shake,
+      y: x * Math.sin(tilt) + y * Math.cos(tilt) + 0.04 + extra + Math.sin(this.now * 71) * shake };
   }
 
   private vertex(p: Point, uv: Point, color: Color, kind = 0) { this.vertices.push(p.x, p.y, uv.x, uv.y, ...color, kind); }

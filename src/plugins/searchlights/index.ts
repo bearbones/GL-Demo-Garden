@@ -1,11 +1,14 @@
 import { FragmentShaderPlugin } from '../../plugin/FragmentShaderPlugin';
 import { EngineContext, GestureEvent } from '../../engine/types';
 import { ParamSlider } from '../../engine/ParamSlider';
+import { ArrowState } from '../../engine/ArrowInput';
+import { ArrowCursor } from '../../engine/ArrowCursor';
 import fragmentSrc from './display.glsl';
 
 /** A two-dimensional light field: visible forms and shadow tests share capsules. */
 export class SearchlightsPlugin extends FragmentShaderPlugin {
   readonly name = 'Searchlights';
+  private keyboard = new ArrowCursor();
 
   private sliders!: ParamSlider;
   private aimingSelect!: HTMLSelectElement;
@@ -99,8 +102,17 @@ export class SearchlightsPlugin extends FragmentShaderPlugin {
     gl.uniform1f(gl.getUniformLocation(program, 'u_manualAim'), this.manualAim ? 1 : 0);
   }
 
+  onKeyboard(ctx: EngineContext, keys: ArrowState) {
+    if (!keys.active) { this.keyboard.vx = this.keyboard.vy = 0; return; }
+    this.keyboard.move(ctx, keys, 0.45, 12);
+    this.mousePos = [this.keyboard.x, 1 - this.keyboard.y];
+    this.manualAim = true;
+    this.aimingSelect.value = 'hand';
+  }
+
   onGesture(ctx: EngineContext, event: GestureEvent) {
     super.onGesture(ctx, event);
+    this.keyboard.place(event.pos.x, event.pos.y);
     this.manualAim = true;
     this.aimingSelect.value = 'hand';
   }

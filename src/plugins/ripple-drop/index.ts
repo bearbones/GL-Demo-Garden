@@ -2,6 +2,8 @@ import { Plugin } from '../../plugin/Plugin';
 import { EngineContext, GestureEvent } from '../../engine/types';
 import { createProgram } from '../../engine/gl-utils';
 import { ParamSlider } from '../../engine/ParamSlider';
+import { ArrowState } from '../../engine/ArrowInput';
+import { ArrowCursor } from '../../engine/ArrowCursor';
 import quadVert from '../../shaders/fullscreen-quad.vert';
 import drawingSrc from './display.glsl';
 import marksVert from './marks.vert';
@@ -71,9 +73,13 @@ export class RippleDropPlugin implements Plugin {
   private mark: 'rings' | 'spiral' = 'rings';
   private rainAccum = 0;
   private lastDragSpawn: [number, number] | null = null;
+  private skater = new ArrowCursor();
+  private skateTravel = 0;
+  private skating = false;
 
   init(ctx: EngineContext) {
     const { gl } = ctx;
+    this.skater.attach(ctx.canvas, 'skater');
     this.drawing = createProgram(gl, marksVert, drawingSrc);
     this.copying = createProgram(gl, quadVert, plateSrc);
     this.copyBackground = gl.getUniformLocation(this.copying, 'u_background');
@@ -132,6 +138,9 @@ export class RippleDropPlugin implements Plugin {
         this.ripples = [];
         this.rainAccum = 0;
         this.lastDragSpawn = null;
+        this.skater.place(0.5, 0.5);
+        this.skateTravel = 0;
+        this.skating = false;
         this.rain = 0;
         this.sliders.setValue('Rain', 0);
       } },
@@ -289,7 +298,30 @@ export class RippleDropPlugin implements Plugin {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
+  onKeyboard(ctx: EngineContext, keys: ArrowState) {
+    if (!this.playing && !keys.active) this.skater.vx = this.skater.vy = 0;
+    const x = this.skater.x, y = this.skater.y;
+    const distance = this.skater.move(ctx, keys, 0.42, 5);
+    const birth = this.time - (this.playing ? 0.025 : 0.45);
+    const kind = this.mark === 'spiral' ? KIND_SPIRAL : KIND_SMALL;
+    if (keys.active && !this.skating) this.spawn(x, 1 - y, kind, birth);
+    this.skating = keys.active || Math.hypot(this.skater.vx, this.skater.vy) > 0;
+    // Emit along distance travelled, not once per frame: turns bunch the
+    // wake naturally without changing its density on faster monitors.
+    const spacing = 0.035;
+    let along = spacing - this.skateTravel;
+    while (along <= distance) {
+      const t = along / distance;
+      this.spawn(x + (this.skater.x - x) * t, 1 - y - (this.skater.y - y) * t, kind, birth);
+      along += spacing;
+    }
+    this.skateTravel = (this.skateTravel + distance) % spacing;
+  }
+
   onGesture(ctx: EngineContext, event: GestureEvent) {
+    this.skater.place(event.pos.x, event.pos.y);
+    this.skating = false;
+    this.skateTravel = 0;
     const x = event.pos.x, y = 1 - event.pos.y;
     const kind = this.mark === 'spiral' ? KIND_SPIRAL : KIND_TAP;
     // A tiny head start leaves visible ink even when placing a paused cel.
@@ -322,6 +354,7 @@ export class RippleDropPlugin implements Plugin {
   }
 
   destroy(ctx: EngineContext) {
+    this.skater.destroy();
     const { gl } = ctx;
     gl.deleteProgram(this.drawing);
     gl.deleteProgram(this.painting);

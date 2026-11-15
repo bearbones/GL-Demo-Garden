@@ -40,6 +40,7 @@ engine.loadPlugin(plugin)
   └─ startTime reset
 
 RAF loop
+  └─ plugin.onKeyboard?(ctx, keys) ← Held direction or release, before rendering
   └─ plugin.render(ctx)           ← Called every frame, dt in seconds
 
 pointer events
@@ -59,10 +60,11 @@ interface Plugin {
   render(ctx: EngineContext): void;
   destroy(ctx: EngineContext): void;
   onGesture?(ctx: EngineContext, event: GestureEvent): void;
+  onKeyboard?(ctx: EngineContext, arrows: ArrowState): void;
 }
 ```
 
-`onGesture` is optional — passive demos that don't need interaction simply omit it.
+`onGesture` and `onKeyboard` are optional. The engine calls `onKeyboard` once per frame before `render`, including frames with no keys held so plugins can stop or settle their interaction.
 
 ---
 
@@ -136,6 +138,10 @@ for (let i = 0; i < stepsPerFrame; i++) {
 ---
 
 ## Input System
+
+`src/engine/ArrowInput.ts` tracks held arrow keys and retains quick taps between frames. Its `ArrowState` contains a normalized `(x, y)` direction in screen coordinates (right/down positive) and an `active` flag. Opposing keys cancel; diagonals have unit length. Form controls and editable content keep native keyboard behavior. Blur, visibility changes, pointer input, editor focus and plugin changes clear the state; OS key repeat cannot restart a cleared press. Plugins integrate movement using `ctx.dt` rather than key-repeat events.
+
+`ArrowCursor` supplies exactly integrated damped movement in viewport-height units, with bounded positions and optional seed/skater markers. Bubble currents instead relax inside the simulation's fixed steps. Marbling keyboard combs share the existing invertible stroke operations and participate in open-stroke, bake and flatten bookkeeping. Stone keyboard opening uses the existing shared fracture mesh and restores the original geometry on closing.
 
 `src/engine/InputManager.ts` absorbs raw `pointerdown/pointermove/pointerup/pointercancel` events and emits four high-level gesture types:
 

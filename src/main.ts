@@ -39,6 +39,16 @@ const HINTS: Record<string, string> = {
 };
 
 const stage = document.getElementById('stage')!;
+const KEYBOARD_HINTS: Record<string, string> = {
+  'wobbly-cells': '↑ ↓ ← → Steer the gather / spread lens. Release to let it settle.',
+  'turing-patterns': '↑ ↓ ← → Draw living trails with the seed tip, or cut paths with Erase.',
+  'bubble-physics': '↑ ↓ ← → Push the water. Hold ↓ to submerge bubbles; release to let them rise.',
+  'ripple-drop': '↑ ↓ ← → Skate across the pond and leave an ink-ripple wake.',
+  'sea-melt': '↑ ↓ ← → Pull the tide. Reverse direction to curl the foam; release to calm it.',
+  'stone-break': '↑ Crack and prise apart · ↓ Knit back together · ← → Rock the pieces.',
+  'searchlights': '↑ ↓ ← → Aim the lights through the haze. Release to hold your aim.',
+  'paper-marbling': '↑ ↓ ← → Pull a comb through the paint. Release to lift; change direction for a new stroke.',
+};
 const engine = new Engine(stage);
 
 const select = document.getElementById('demo-select') as HTMLSelectElement;
@@ -75,6 +85,7 @@ function loadFromHash() {
   if (id === currentId) return;
   currentId = id;
   hint.textContent = HINTS[id];
+  document.getElementById('keyboard-hint')!.textContent = KEYBOARD_HINTS[id];
   engine.loadPlugin(PLUGINS[id]());
 }
 

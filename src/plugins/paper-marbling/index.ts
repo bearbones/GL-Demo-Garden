@@ -2,6 +2,7 @@ import { Plugin } from '../../plugin/Plugin';
 import { EngineContext, GestureEvent } from '../../engine/types';
 import { createProgram } from '../../engine/gl-utils';
 import { ParamSlider } from '../../engine/ParamSlider';
+import { ArrowState } from '../../engine/ArrowInput';
 import quadVert from '../../shaders/fullscreen-quad.vert';
 import traceSrc from './trace.glsl';
 import displaySrc from './display.glsl';
@@ -170,6 +171,10 @@ export class PaperMarblingPlugin implements Plugin {
   private toolAlpha = 0;
   private shownTool: StrokeTool = stylusTool(ROD_DEFAULT, 0.9);
   private recipe: RecipeRun | null = null;
+  private keyboardStroke: ActiveStroke | null = null;
+  private keyboardDir: Vec2 | null = null;
+  private keyboardTravel = 0;
+  private keyboardReach = 0;
 
   private printPhase = 0; // 0 bath, 1 laying, 2 flipping, 3 viewing
   private printT = 0;
@@ -264,6 +269,8 @@ export class PaperMarblingPlugin implements Plugin {
   }
 
   resize(ctx: EngineContext) {
+    this.keyboardStroke = null;
+    this.keyboardDir = null;
     this.allocTargets(ctx);
     // Bath units follow the canvas, so the point under a held finger moved:
     // lift the tool and set it down again on the next move
@@ -390,7 +397,7 @@ export class PaperMarblingPlugin implements Plugin {
    * straight stroke split anywhere composes exactly, so nothing else moves).
    */
   private closeOpenStrokes() {
-    for (const s of [this.userStroke, this.recipe?.stroke]) {
+    for (const s of [this.userStroke, this.keyboardStroke, this.recipe?.stroke]) {
       if (s && s.op >= 0) {
         s.anchor = s.last;
         s.pts = [];
@@ -453,8 +460,9 @@ export class PaperMarblingPlugin implements Plugin {
   private settledCount(): number {
     const openA = this.userStroke ? this.userStroke.op : -1;
     const openB = this.recipe?.stroke ? this.recipe.stroke.op : -1;
+    const openC = this.keyboardStroke ? this.keyboardStroke.op : -1;
     let i = this.bakeCount;
-    while (i < this.opCount && i !== openA && i !== openB && !this.animating(i)) i++;
+    while (i < this.opCount && i !== openA && i !== openB && i !== openC && !this.animating(i)) i++;
     return i;
   }
 
@@ -532,17 +540,21 @@ export class PaperMarblingPlugin implements Plugin {
 
   private userTool(): StrokeTool {
     if (this.tool === 'comb' && this.combDir) {
-      const axis: Vec2 = [-this.combDir[1], this.combDir[0]];
-      const span = 2 * Math.hypot(this.aspect, 1) + 0.4;
-      // Tines closer than ~4 rod sizes would pull the paint between them
-      // faster than the tines themselves
-      const size = Math.min(this.rodSize, this.combSpacing / 4);
-      return {
-        tines: Math.ceil(span / this.combSpacing) + 1, spacing: this.combSpacing, size, kappa: this.drag, axis,
-        falloff: Math.max(FALL * size, 0.22 * this.combSpacing),
-      };
+      return this.combTool(this.combDir);
     }
     return stylusTool(this.rodSize, this.drag);
+  }
+
+  private combTool(direction: Vec2): StrokeTool {
+    const axis: Vec2 = [-direction[1], direction[0]];
+    const span = 2 * Math.hypot(this.aspect, 1) + 0.4;
+    // Tines closer than ~4 rod sizes would pull the paint between them
+    // faster than the tines themselves
+    const size = Math.min(this.rodSize, this.combSpacing / 4);
+    return {
+      tines: Math.ceil(span / this.combSpacing) + 1, spacing: this.combSpacing, size, kappa: this.drag, axis,
+      falloff: Math.max(FALL * size, 0.22 * this.combSpacing),
+    };
   }
 
   // ── Recipes ─────────────────────────────────────────────────────────
@@ -754,7 +766,7 @@ export class PaperMarblingPlugin implements Plugin {
     this.opCount -= n;
     this.bakeCount = 0;
     this.building = null;
-    for (const s of [this.userStroke, this.recipe?.stroke]) {
+    for (const s of [this.userStroke, this.keyboardStroke, this.recipe?.stroke]) {
       if (s && s.op >= 0) s.op -= n;
     }
     for (let i = 0; i < this.opCount; i++) this.updateCost(i);
@@ -763,6 +775,8 @@ export class PaperMarblingPlugin implements Plugin {
   }
 
   private clearBath() {
+    this.keyboardStroke = null;
+    this.keyboardDir = null;
     this.opCount = 0;
     this.bakeCount = 0;
     this.building = null;
@@ -819,7 +833,7 @@ export class PaperMarblingPlugin implements Plugin {
 
     // Composite to screen
     const showTool = this.dragging && !this.rebaseDrag && this.tool !== 'drops' && (this.tool !== 'comb' || this.combDir !== null);
-    const target = showTool || this.recipe?.stroke ? 1 : 0;
+    const target = showTool || this.keyboardStroke || this.recipe?.stroke ? 1 : 0;
     this.toolAlpha += (target - this.toolAlpha) * (1 - Math.exp(-dt / 0.08));
     if (target === 0 && this.toolAlpha < 0.01) this.toolAlpha = 0;
 
@@ -907,6 +921,31 @@ export class PaperMarblingPlugin implements Plugin {
 
   // ── Input ───────────────────────────────────────────────────────────
 
+  onKeyboard(ctx: EngineContext, keys: ArrowState) {
+    this.time = ctx.time;
+    if (!keys.active || this.printPhase > 0 || this.dragging) {
+      this.keyboardStroke = null;
+      this.keyboardDir = null;
+      return;
+    }
+    const dir: Vec2 = [keys.x, -keys.y];
+    if (!this.keyboardDir || dir[0] !== this.keyboardDir[0] || dir[1] !== this.keyboardDir[1]) {
+      this.stopRecipeStrokes();
+      this.keyboardDir = dir;
+      // Enter from the incoming edge. Every release lifts the comb; a fresh
+      // press starts another pass, including when the old pass hit the rim.
+      this.keyboardReach = Math.min(dir[0] ? this.aspect * 0.5 / Math.abs(dir[0]) : Infinity,
+        dir[1] ? 0.5 / Math.abs(dir[1]) : Infinity) + 0.035;
+      this.keyboardTravel = 0;
+      this.toolPos = [-dir[0] * this.keyboardReach, -dir[1] * this.keyboardReach];
+      this.keyboardStroke = this.beginStroke(this.toolPos, this.combTool(dir));
+      this.shownTool = this.keyboardStroke.tool;
+    }
+    this.keyboardTravel = Math.min(2 * this.keyboardReach, this.keyboardTravel + ctx.dt * 0.5);
+    this.toolPos = [dir[0] * (this.keyboardTravel - this.keyboardReach), dir[1] * (this.keyboardTravel - this.keyboardReach)];
+    this.strokeTo(this.keyboardStroke!, this.toolPos, COMB_CHORD_TOL_PX);
+  }
+
   private toBath(e: GestureEvent): Vec2 {
     return [(e.pos.x - 0.5) * this.aspect, 0.5 - e.pos.y];
   }
@@ -923,6 +962,8 @@ export class PaperMarblingPlugin implements Plugin {
   }
 
   onGesture(ctx: EngineContext, event: GestureEvent) {
+    this.keyboardStroke = null;
+    this.keyboardDir = null;
     this.time = ctx.time;
     if (this.printPhase > 0) {
       if (this.printPhase === 3 && (event.type === 'tap' || event.type === 'drag-end')) this.endPrint();

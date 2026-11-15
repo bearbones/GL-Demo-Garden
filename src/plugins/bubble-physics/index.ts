@@ -2,6 +2,7 @@ import { Plugin } from '../../plugin/Plugin';
 import { EngineContext } from '../../engine/types';
 import { createProgram } from '../../engine/gl-utils';
 import { ParamSlider } from '../../engine/ParamSlider';
+import { ArrowState } from '../../engine/ArrowInput';
 import { BubbleSimulation, MAX_BUBBLES, PADDLE_RADIUS } from './simulation';
 import quadVert from '../../shaders/fullscreen-quad.vert';
 import backgroundFrag from './background.glsl';
@@ -105,6 +106,10 @@ export class BubblePhysicsPlugin implements Plugin {
   }
 
   resize(ctx: EngineContext) { this.simulation.resize(ctx.width / ctx.height); }
+
+  onKeyboard(_ctx: EngineContext, keys: ArrowState) {
+    this.simulation.setCurrent(keys.x, -keys.y);
+  }
 
   render(ctx: EngineContext) {
     const { gl } = ctx;
