@@ -11,6 +11,7 @@ import { PaperMarblingPlugin } from './plugins/paper-marbling';
 import './style.css';
 
 const PLUGINS: Record<string, () => Plugin> = {
+  'paper-marbling': () => new PaperMarblingPlugin(),
   'wobbly-cells': () => new WobbyCellsPlugin(),
   'turing-patterns': () => new TuringPatternsPlugin(),
   'bubble-physics': () => new BubblePhysicsPlugin(),
@@ -18,10 +19,9 @@ const PLUGINS: Record<string, () => Plugin> = {
   'sea-melt': () => new SeaMeltPlugin(),
   'stone-break': () => new StoneBreakPlugin(),
   'searchlights': () => new SearchlightsPlugin(),
-  'paper-marbling': () => new PaperMarblingPlugin(),
 };
 
-const DEFAULT_ID = 'wobbly-cells';
+const DEFAULT_ID = 'paper-marbling';
 const HASH_REDIRECTS: Record<string, string> = {
   'laser-bird': DEFAULT_ID,
   'glass-water': DEFAULT_ID,

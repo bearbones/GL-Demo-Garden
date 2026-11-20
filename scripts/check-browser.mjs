@@ -191,11 +191,17 @@ try {
     check(await page.locator('#garden-drawer').isHidden(), `${id} starts unobstructed on mobile`);
     await page.screenshot({ path: `${artifacts}/mobile-${id}.png` });
   }
+  await page.goto('about:blank');
+  await page.goto('http://127.0.0.1:4187/');
+  await page.locator('#demo-select option').first().waitFor({ state: 'attached' });
+  const landing = await step(2);
+  check(landing.error === 0, 'Default landing page renders without a WebGL error');
+  check(await page.locator('#demo-select').inputValue() === 'paper-marbling', 'Default landing page opens Paper Marbling');
   for (const retired of ['laser-bird', 'glass-water']) {
     await go(retired);
     await step();
-    check(await page.locator('#demo-select').inputValue() === 'wobbly-cells', `${retired} bookmark returns to the gallery`);
-    check(new URL(page.url()).hash === '#wobbly-cells', `${retired} bookmark is normalized`);
+    check(await page.locator('#demo-select').inputValue() === 'paper-marbling', `${retired} bookmark returns to the gallery`);
+    check(new URL(page.url()).hash === '#paper-marbling', `${retired} bookmark is normalized`);
   }
   await go('lighthouse-vigil');
   check(await page.locator('#demo-select').inputValue() === 'searchlights', 'Former lighthouse bookmark opens Searchlights');
